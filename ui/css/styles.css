@@ -254,6 +254,21 @@ body { font-family: 'Segoe UI', sans-serif; background: var(--bg); color: var(--
     border-radius: 8px; color: var(--text); font-size: 13px; outline: none; width: 130px;
 }
 .search-input:focus { border-color: var(--accent); }
+.search-input.search-active { border-color: var(--accent); background: rgba(79,142,247,0.07); width: 180px; }
+
+/* Бейдж папки в результатах поиска */
+.ei-folder-badge {
+    display: inline-block; margin-left: 6px;
+    padding: 1px 6px; border-radius: 10px; font-size: 10px; font-weight: 500;
+    background: rgba(79,142,247,0.15); color: var(--accent);
+    vertical-align: middle; flex-shrink: 0;
+}
+
+/* Счётчик результатов поиска */
+.search-count-hint {
+    text-align: center; padding: 8px; font-size: 11px;
+    color: var(--text2); opacity: 0.6; border-top: 1px solid var(--border);
+}
 
 .email-list { flex: 1; overflow-y: auto; }
 

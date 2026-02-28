@@ -1016,15 +1016,75 @@ document.addEventListener('click', function(e) {
     if (wrap && !wrap.contains(e.target)) closeMovePopup();
 });
 
+const FOLDER_LABELS = { INBOX: 'Входящие', Sent: 'Отправленные', Trash: 'Корзина', Spam: 'Спам', Drafts: 'Черновики', Starred: 'Избранное' };
+let _isSearchMode = false;
+let _searchDebounce = null;
+
 function filterEmails(query) {
-    if (!query.trim()) { renderEmailList(allEmails); return; }
-    const q = query.toLowerCase();
-    const filtered = allEmails.filter(e =>
-        e.from_addr.toLowerCase().includes(q) ||
-        e.subject.toLowerCase().includes(q) ||
-        e.snippet.toLowerCase().includes(q)
-    );
-    renderEmailList(filtered);
+    clearTimeout(_searchDebounce);
+    const q = query.trim();
+    if (!q) {
+        _isSearchMode = false;
+        document.getElementById('searchInput').classList.remove('search-active');
+        renderEmailList(allEmails);
+        return;
+    }
+    if (q.length < 2) return;
+    _searchDebounce = setTimeout(() => _runSearch(q), 350);
+}
+
+async function _runSearch(query) {
+    if (!currentAccountId) return;
+    _isSearchMode = true;
+    document.getElementById('searchInput').classList.add('search-active');
+    const list = document.getElementById('emailList');
+    list.innerHTML = '<div class="empty-state"><i class="fas fa-circle-notch fa-spin"></i><p>Поиск...</p></div>';
+    try {
+        const results = await invoke('search_emails', { accountId: currentAccountId, query, limit: 200 });
+        _renderSearchResults(results, query);
+    } catch (e) {
+        list.innerHTML = `<div class="empty-state"><i class="fas fa-exclamation-circle"></i><p>Ошибка поиска: ${escHtml(String(e))}</p></div>`;
+    }
+}
+
+function _renderSearchResults(emails, query) {
+    const list = document.getElementById('emailList');
+    if (emails.length === 0) {
+        list.innerHTML = `<div class="empty-state"><i class="fas fa-search"></i><p>Ничего не найдено по «${escHtml(query)}»</p></div>`;
+        return;
+    }
+    list.innerHTML = emails.map(email => {
+        const isSentOrDraft = email.folder === 'Sent' || email.folder === 'Drafts';
+        const avatarAddr = isSentOrDraft ? email.to_addr : email.from_addr;
+        const { color: bgColor, initials, ico } = getAddrInfo(avatarAddr);
+        const avatarHtml = ico
+            ? `<img class="ei-logo" src="${ico}" alt=""
+                   onerror="this.style.display='none';this.nextElementSibling.style.display='flex'"
+                   onload="this.nextElementSibling.style.display='none'">
+               <div class="ei-avatar" style="background:${bgColor};display:none">${initials}</div>`
+            : `<div class="ei-avatar" style="background:${bgColor}">${initials}</div>`;
+        const folderLabel = FOLDER_LABELS[email.folder] || email.folder;
+        return `
+    <div class="email-item ${email.is_read ? '' : 'unread'} ${email.id === currentEmailId ? 'active' : ''}"
+         id="ei-${email.id}" onclick="openEmail(${email.id})">
+        <div class="ei-unread-dot" onclick="toggleEmailReadFromList(${email.id}, event)"
+             title="${email.is_read ? 'Отметить как непрочитанное' : 'Отметить как прочитанное'}"></div>
+        <div class="ei-avatar-zone">${avatarHtml}</div>
+        <div class="ei-top">
+            <span class="ei-from">${escHtml(shortAddr(avatarAddr))}</span>
+            <span class="ei-date">${formatDate(email.date)}</span>
+            <span class="ei-icons">
+                ${email.is_starred ? '<i class="fas fa-star ei-star starred"></i>' : ''}
+                ${email.has_attachment ? '<i class="fas fa-paperclip ei-attach"></i>' : ''}
+            </span>
+        </div>
+        <div class="ei-subject">
+            ${escHtml(email.subject) || '(без темы)'}
+            <span class="ei-folder-badge">${escHtml(folderLabel)}</span>
+        </div>
+        <div class="ei-snippet">${escHtml(email.snippet)}</div>
+    </div>`;
+    }).join('') + `<div class="search-count-hint">${emails.length >= 200 ? '200+' : emails.length} результатов</div>`;
 }
 
 // ── Синхронизация ──────────────────────────────────────────────────────────

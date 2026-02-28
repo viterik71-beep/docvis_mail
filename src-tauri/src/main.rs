@@ -1690,6 +1690,59 @@ fn get_emails(
     Ok(list)
 }
 
+/// Полнотекстовый поиск по всем папкам аккаунта (from, to, subject, body)
+#[tauri::command]
+fn search_emails(
+    state: State<AppState>,
+    account_id: i64,
+    query: String,
+    limit: Option<i64>,
+) -> Result<Vec<EmailItem>, String> {
+    let q = query.trim().to_string();
+    if q.is_empty() { return Ok(vec![]); }
+    let limit = limit.unwrap_or(200).min(500);
+    // Два паттерна: оригинал и lowercase — покрывает большинство случаев с кириллицей
+    let pat = format!("%{}%", q);
+    let pat_lo = format!("%{}%", q.to_lowercase());
+    let conn = state.db.lock().unwrap();
+    let mut stmt = conn.prepare(
+        "SELECT id, uid, folder, from_addr, to_addr, subject, date, date_ts,
+                is_read, is_starred, has_attachment, snippet
+         FROM emails
+         WHERE account_id=?1 AND (
+             from_addr LIKE ?2 OR from_addr LIKE ?3 OR
+             to_addr   LIKE ?2 OR to_addr   LIKE ?3 OR
+             subject   LIKE ?2 OR subject   LIKE ?3 OR
+             snippet   LIKE ?2 OR snippet   LIKE ?3 OR
+             body_text LIKE ?2 OR body_text LIKE ?3
+         )
+         ORDER BY date_ts DESC, id DESC
+         LIMIT ?4"
+    ).map_err(|e| e.to_string())?;
+
+    let list: Vec<EmailItem> = stmt.query_map(params![account_id, pat, pat_lo, limit], |r| {
+        let snippet: String = r.get(11)?;
+        Ok(EmailItem {
+            id:             r.get(0)?,
+            uid:            r.get::<_, i64>(1)? as u32,
+            folder:         r.get(2)?,
+            from_addr:      r.get(3)?,
+            to_addr:        r.get(4)?,
+            subject:        r.get(5)?,
+            date:           r.get(6)?,
+            date_ts:        r.get(7)?,
+            is_read:        r.get::<_, i32>(8)? != 0,
+            is_starred:     r.get::<_, i32>(9)? != 0,
+            has_attachment: r.get::<_, i32>(10)? != 0,
+            snippet,
+        })
+    }).map_err(|e| e.to_string())?
+    .filter_map(|r| r.ok())
+    .collect();
+
+    Ok(list)
+}
+
 #[tauri::command]
 fn get_email_body(state: State<AppState>, email_id: i64) -> Result<EmailBody, String> {
     let conn = state.db.lock().unwrap();
@@ -2908,6 +2961,7 @@ fn main() {
             delete_account,
             sync_folder,
             get_emails,
+            search_emails,
             get_email_body,
             mark_read,
             toggle_starred,
