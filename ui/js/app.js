@@ -1017,6 +1017,22 @@ document.addEventListener('click', function(e) {
 });
 
 const FOLDER_LABELS = { INBOX: 'Входящие', Sent: 'Отправленные', Trash: 'Корзина', Spam: 'Спам', Drafts: 'Черновики', Starred: 'Избранное' };
+
+// Подсвечивает вхождения query в rawText (безопасно, без XSS)
+function highlightText(rawText, query) {
+    if (!rawText || !query) return escHtml(rawText || '');
+    const q = query.toLowerCase();
+    const lower = rawText.toLowerCase();
+    const parts = [];
+    let last = 0, idx;
+    while ((idx = lower.indexOf(q, last)) !== -1) {
+        parts.push(escHtml(rawText.slice(last, idx)));
+        parts.push(`<mark class="search-hl">${escHtml(rawText.slice(idx, idx + q.length))}</mark>`);
+        last = idx + q.length;
+    }
+    parts.push(escHtml(rawText.slice(last)));
+    return parts.join('');
+}
 let _isSearchMode = false;
 let _searchDebounce = null;
 
@@ -1079,10 +1095,10 @@ function _renderSearchResults(emails, query) {
             </span>
         </div>
         <div class="ei-subject">
-            ${escHtml(email.subject) || '(без темы)'}
+            ${highlightText(email.subject, query) || '(без темы)'}
             <span class="ei-folder-badge">${escHtml(folderLabel)}</span>
         </div>
-        <div class="ei-snippet">${escHtml(email.snippet)}</div>
+        <div class="ei-snippet">${highlightText(email.snippet, query)}</div>
     </div>`;
     }).join('') + `<div class="search-count-hint">${emails.length >= 200 ? '200+' : emails.length} результатов</div>`;
 }

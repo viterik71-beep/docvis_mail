@@ -1701,26 +1701,25 @@ fn search_emails(
     let q = query.trim().to_string();
     if q.is_empty() { return Ok(vec![]); }
     let limit = limit.unwrap_or(200).min(500);
-    // Два паттерна: оригинал и lowercase — покрывает большинство случаев с кириллицей
-    let pat = format!("%{}%", q);
-    let pat_lo = format!("%{}%", q.to_lowercase());
+    // u_lower — кастомная Unicode-aware функция (поддерживает кириллицу)
+    let pat = format!("%{}%", q.to_lowercase());
     let conn = state.db.lock().unwrap();
     let mut stmt = conn.prepare(
         "SELECT id, uid, folder, from_addr, to_addr, subject, date, date_ts,
                 is_read, is_starred, has_attachment, snippet
          FROM emails
          WHERE account_id=?1 AND (
-             from_addr LIKE ?2 OR from_addr LIKE ?3 OR
-             to_addr   LIKE ?2 OR to_addr   LIKE ?3 OR
-             subject   LIKE ?2 OR subject   LIKE ?3 OR
-             snippet   LIKE ?2 OR snippet   LIKE ?3 OR
-             body_text LIKE ?2 OR body_text LIKE ?3
+             u_lower(from_addr) LIKE ?2 OR
+             u_lower(to_addr)   LIKE ?2 OR
+             u_lower(subject)   LIKE ?2 OR
+             u_lower(snippet)   LIKE ?2 OR
+             u_lower(body_text) LIKE ?2
          )
          ORDER BY date_ts DESC, id DESC
-         LIMIT ?4"
+         LIMIT ?3"
     ).map_err(|e| e.to_string())?;
 
-    let list: Vec<EmailItem> = stmt.query_map(params![account_id, pat, pat_lo, limit], |r| {
+    let list: Vec<EmailItem> = stmt.query_map(params![account_id, pat, limit], |r| {
         let snippet: String = r.get(11)?;
         Ok(EmailItem {
             id:             r.get(0)?,
@@ -2844,6 +2843,16 @@ fn main() {
         PRAGMA temp_store=MEMORY;
         PRAGMA mmap_size=67108864;
     ").ok();
+    // Кастомная функция u_lower — Unicode-aware lowercase (поддерживает кириллицу)
+    conn.create_scalar_function(
+        "u_lower", 1,
+        rusqlite::functions::FunctionFlags::SQLITE_UTF8 | rusqlite::functions::FunctionFlags::SQLITE_DETERMINISTIC,
+        |ctx| {
+            let text: Option<String> = ctx.get(0)?;
+            Ok(text.map(|s| s.to_lowercase()))
+        },
+    ).ok();
+
     init_db(&conn);
     backfill_date_ts(&conn);  // Исправляем date_ts=0 у старых писем (одноразово)
     migrate_passwords(&conn); // Переносим пароли из БД в Credential Manager

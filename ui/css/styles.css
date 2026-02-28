@@ -264,6 +264,13 @@ body { font-family: 'Segoe UI', sans-serif; background: var(--bg); color: var(--
     vertical-align: middle; flex-shrink: 0;
 }
 
+/* Подсветка найденного текста */
+mark.search-hl {
+    background: rgba(255, 210, 0, 0.45); color: inherit;
+    border-radius: 2px; padding: 0 1px;
+}
+[data-theme="dark"] mark.search-hl { background: rgba(255, 190, 0, 0.35); }
+
 /* Счётчик результатов поиска */
 .search-count-hint {
     text-align: center; padding: 8px; font-size: 11px;
