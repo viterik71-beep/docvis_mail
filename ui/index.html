@@ -1,0 +1,671 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ДокВис Почта</title>
+    <link rel="icon" href="favicon.ico">
+    <link rel="stylesheet" href="css/fontawesome/all.min.css">
+    <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+
+<!-- ─── Экран добавления аккаунта ─── -->
+<div id="setupScreen" class="setup-screen" style="display:none;">
+    <div class="setup-card">
+        <div class="setup-logo"><i class="fas fa-envelope"></i></div>
+        <h2>ДокВис Почта</h2>
+        <p class="setup-subtitle">Добавьте почтовый аккаунт</p>
+
+        <div class="preset-buttons">
+            <button class="preset-btn" onclick="applyPreset('mailru')">
+                <img src="https://e.mail.ru/favicon.ico" onerror="this.style.display='none'"> Mail.ru
+            </button>
+            <button class="preset-btn" onclick="applyPreset('yandex')">
+                <img src="https://yandex.ru/favicon.ico" onerror="this.style.display='none'"> Яндекс
+            </button>
+            <button class="preset-btn" onclick="applyPreset('gmail')">
+                <img src="https://gmail.com/favicon.ico" onerror="this.style.display='none'"> Gmail
+            </button>
+            <button class="preset-btn" onclick="applyPreset('other')">
+                <i class="fas fa-cog"></i> Другой
+            </button>
+        </div>
+
+        <div class="setup-form">
+            <div class="form-row">
+                <label>Email</label>
+                <input type="email" id="setupEmail" placeholder="user@mail.ru">
+            </div>
+            <div class="form-row">
+                <label>Имя отправителя</label>
+                <input type="text" id="setupName" placeholder="Иван Иванов">
+            </div>
+            <div class="form-row">
+                <label>Пароль</label>
+                <input type="password" id="setupPassword" placeholder="Пароль или пароль приложения">
+            </div>
+            <details id="advancedSettings" class="advanced-details">
+                <summary>Настройки сервера</summary>
+                <div class="form-row">
+                    <label>IMAP сервер</label>
+                    <input type="text" id="setupImapHost" placeholder="imap.mail.ru">
+                </div>
+                <div class="form-row">
+                    <label>IMAP порт</label>
+                    <input type="number" id="setupImapPort" value="993">
+                </div>
+                <div class="form-row">
+                    <label>SMTP сервер</label>
+                    <input type="text" id="setupSmtpHost" placeholder="smtp.mail.ru">
+                </div>
+                <div class="form-row">
+                    <label>SMTP порт</label>
+                    <input type="number" id="setupSmtpPort" value="465">
+                </div>
+            </details>
+            <div id="setupError" class="setup-error" style="display:none;"></div>
+            <button class="btn-primary" onclick="saveAccount()" id="setupSaveBtn">
+                <i class="fas fa-plus"></i> Добавить аккаунт
+            </button>
+            <button class="ev-btn" id="setupCancelBtn" onclick="showApp()" style="display:none;margin-top:8px;width:100%;justify-content:center;">
+                <i class="fas fa-arrow-left"></i> Вернуться в почту
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- ─── Основной интерфейс ─── -->
+<div id="mainApp" class="app-wrapper" style="display:none;">
+
+    <!-- Вкладки -->
+    <div class="app-tabs">
+        <button class="app-tab active" id="tabMail" onclick="switchView('mail')">
+            <i class="fas fa-envelope"></i> Почта
+        </button>
+        <button class="app-tab" id="tabContacts" onclick="switchView('contacts')">
+            <i class="fas fa-address-book"></i> Контакты
+        </button>
+        <div style="flex:1"></div>
+        <button class="app-tab-icon" id="settingsBtn" onclick="openSettings()" title="Настройки">
+            <i class="fas fa-cog"></i>
+        </button>
+        <button class="app-tab-icon" onclick="openAbout()" title="О программе">
+            <i class="fas fa-info-circle"></i>
+        </button>
+    </div>
+
+    <!-- Раздел почты -->
+    <div id="mailView" class="app-layout">
+
+    <!-- Левая панель -->
+    <div class="sidebar">
+        <!-- Аккаунты -->
+        <div class="sidebar-accounts" id="accountList"></div>
+
+        <!-- Кнопка написать -->
+        <button class="compose-btn" onclick="openCompose()">
+            <i class="fas fa-pen"></i> Написать
+        </button>
+
+        <!-- Папки -->
+        <nav class="folder-nav" id="folderNav">
+            <div class="folder-item active" data-folder="INBOX" onclick="selectFolder('INBOX')">
+                <i class="fas fa-inbox"></i> Входящие
+                <span class="folder-badge" id="badge-INBOX" style="display:none;"></span>
+            </div>
+            <div class="folder-item" data-folder="Sent" onclick="selectFolder('Sent')">
+                <i class="fas fa-paper-plane"></i> Отправленные
+            </div>
+            <div class="folder-item" data-folder="Drafts" onclick="selectFolder('Drafts')">
+                <i class="fas fa-file-alt"></i> Черновики
+                <span class="folder-badge" id="badge-Drafts" style="display:none;"></span>
+            </div>
+            <div class="folder-item" data-folder="Starred" onclick="selectFolder('Starred')">
+                <i class="fas fa-star"></i> Помечённые
+            </div>
+            <div class="folder-item" data-folder="Spam" onclick="selectFolder('Spam')">
+                <i class="fas fa-ban"></i> Спам
+            </div>
+            <div class="folder-item" data-folder="Trash" onclick="selectFolder('Trash')">
+                <i class="fas fa-trash"></i> Корзина
+            </div>
+
+            <!-- Пользовательские папки -->
+            <div class="folders-section-header">
+                <span>Папки</span>
+                <button class="icon-btn folders-add-btn" onclick="promptCreateFolder()" title="Создать папку">
+                    <i class="fas fa-plus"></i>
+                </button>
+            </div>
+            <!-- Поле ввода новой папки (скрыто по умолчанию) -->
+            <div id="newFolderInputWrap" style="display:none;" class="new-folder-input-wrap">
+                <i class="fas fa-folder"></i>
+                <input id="newFolderInput" type="text" placeholder="Название папки"
+                       onkeydown="onNewFolderKey(event)" maxlength="60">
+                <button class="icon-btn" onclick="confirmCreateFolder()" title="Создать"><i class="fas fa-check"></i></button>
+                <button class="icon-btn" onclick="cancelCreateFolder()" title="Отмена"><i class="fas fa-times"></i></button>
+            </div>
+            <div id="customFoldersList"></div>
+        </nav>
+
+        <!-- Модал переименования папки -->
+        <div id="renameFolderModal" class="modal-overlay" style="display:none;" onclick="closeRenameFolderOverlay(event)">
+            <div class="rename-folder-dialog">
+                <div class="settings-header">
+                    <span><i class="fas fa-folder"></i> Переименовать папку</span>
+                    <button class="icon-btn" onclick="closeRenameFolder()"><i class="fas fa-times"></i></button>
+                </div>
+                <div style="padding:16px;display:flex;flex-direction:column;gap:12px;">
+                    <input id="renameFolderInput" type="text" class="settings-path-val"
+                           style="width:100%;box-sizing:border-box;" placeholder="Новое название" maxlength="60"
+                           onkeydown="if(event.key==='Enter')confirmRenameFolder();if(event.key==='Escape')closeRenameFolder();">
+                    <div style="display:flex;gap:8px;justify-content:flex-end;">
+                        <button class="btn-primary" style="width:auto;padding:8px 20px;" onclick="confirmRenameFolder()">Переименовать</button>
+                        <button class="ev-btn" onclick="closeRenameFolder()">Отмена</button>
+                    </div>
+                    <div id="renameFolderError" class="setup-error" style="display:none;"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Подвал: добавить аккаунт -->
+        <div class="sidebar-footer">
+            <button class="add-account-btn" style="margin:0;width:100%;" onclick="showSetup()">
+                <i class="fas fa-plus-circle"></i> Аккаунт
+            </button>
+        </div>
+    </div>
+
+    <!-- Список писем -->
+    <div class="email-list-panel">
+        <div class="email-list-header">
+            <span id="folderTitle">Входящие</span>
+            <div class="email-list-actions">
+                <button class="icon-btn" onclick="syncCurrentFolder()" title="Обновить">
+                    <i class="fas fa-sync" id="syncIcon"></i>
+                </button>
+                <button class="icon-btn danger-icon" id="clearTrashBtn" onclick="clearTrash()" title="Очистить корзину" style="display:none;">
+                    <i class="fas fa-trash-alt"></i>
+                </button>
+                <input type="text" id="searchInput" class="search-input" placeholder="Поиск..." oninput="filterEmails(this.value)">
+            </div>
+        </div>
+        <!-- Панель массового выбора (скрыта пока нет выбранных) -->
+        <div class="select-toolbar" id="selectToolbar">
+            <input type="checkbox" id="selectAllCheck" title="Выбрать все" onchange="toggleSelectAll(this.checked)">
+            <span class="select-count" id="selectCount">0 выбрано</span>
+            <button class="icon-btn" onclick="bulkMarkRead(true)" title="Отметить как прочитанные">
+                <i class="fas fa-envelope-open"></i>
+            </button>
+            <button class="icon-btn" onclick="bulkMarkRead(false)" title="Отметить как непрочитанные">
+                <i class="fas fa-envelope"></i>
+            </button>
+            <button class="icon-btn danger-icon" id="bulkActionBtn" onclick="bulkDelete()" title="В корзину">
+                <i class="fas fa-trash"></i>
+            </button>
+            <div class="move-folder-wrap" id="moveFolderWrap">
+                <button class="ev-btn" onclick="openMoveFolderPopup()" title="Переместить в папку">
+                    <i class="fas fa-folder-open"></i> В папку <i class="fas fa-caret-down"></i>
+                </button>
+                <div class="move-folder-popup" id="moveFolderPopup"></div>
+            </div>
+            <button class="ev-btn" onclick="clearSelection()" title="Снять выбор">
+                <i class="fas fa-times"></i>
+            </button>
+        </div>
+        <div class="email-list" id="emailList">
+            <div class="empty-state"><i class="fas fa-inbox"></i><p>Выберите папку</p></div>
+        </div>
+    </div>
+
+    <!-- Просмотр письма -->
+    <div class="email-view-panel" id="emailViewPanel">
+        <div class="empty-state large"><i class="fas fa-envelope-open-text"></i><p>Выберите письмо</p></div>
+    </div>
+
+    </div><!-- /mailView -->
+
+    <!-- Статусная строка -->
+    <div class="statusbar" id="statusbar">
+        <span class="statusbar-item" id="sbSyncStatus">
+            <i class="fas fa-circle sb-dot" id="sbDot"></i>
+            <span id="sbText">Готово</span>
+        </span>
+        <span class="statusbar-sep"></span>
+        <span class="statusbar-item" id="sbLastSync" style="display:none;">
+            Последняя проверка: <span id="sbLastSyncTime">—</span>
+        </span>
+        <span class="statusbar-sep" id="sbSep2" style="display:none;"></span>
+        <span class="statusbar-item" id="sbNewCount" style="display:none;">
+            Новых: <b id="sbNewNum">0</b>
+        </span>
+        <span style="flex:1"></span>
+        <span class="statusbar-item statusbar-log-btn" onclick="openLogPanel()">
+            <i class="fas fa-terminal"></i> Лог
+        </span>
+    </div>
+
+    <!-- Раздел контактов -->
+    <div id="contactsView" class="contacts-view" style="display:none;">
+        <div class="contacts-sidebar">
+            <div class="contacts-toolbar">
+                <input type="checkbox" id="selectAllContacts" class="contacts-select-all-cb"
+                       title="Выделить все" onchange="toggleSelectAllContacts(this)">
+                <input type="text" id="contactSearch" class="search-input" placeholder="Поиск..." oninput="filterContacts(this.value)">
+                <input type="file" id="vcfFileInput" accept=".vcf" style="display:none;" onchange="importContactsVcf(this)">
+                <input type="file" id="csvFileInput" accept=".csv" style="display:none;" onchange="importContactsCsv(this)">
+                <div class="import-btn-wrap">
+                    <button class="icon-btn" onclick="toggleImportDropdown()" title="Импорт контактов">
+                        <i class="fas fa-file-import"></i>
+                    </button>
+                    <div class="import-dropdown" id="importDropdown" style="display:none;">
+                        <div class="import-dropdown-item" onclick="document.getElementById('vcfFileInput').click();closeImportDropdown()">
+                            <i class="fas fa-address-card"></i> vCard (.vcf)
+                        </div>
+                        <div class="import-dropdown-item" onclick="document.getElementById('csvFileInput').click();closeImportDropdown()">
+                            <i class="fas fa-table"></i> CSV (.csv)
+                        </div>
+                    </div>
+                </div>
+                <button class="icon-btn" onclick="newContact()" title="Новый контакт"><i class="fas fa-user-plus"></i></button>
+            </div>
+            <div class="contacts-groups-bar" id="groupChipsBar"></div>
+            <div class="contacts-select-bar" id="contactsSelectBar">
+                <span class="sel-count" id="contactsSelCount">0 выбрано</span>
+                <div class="group-assign-wrap">
+                    <button class="ev-btn" style="font-size:12px;padding:4px 10px;" onclick="toggleGroupAssignDropdown()">
+                        <i class="fas fa-users"></i> В группу <i class="fas fa-caret-down"></i>
+                    </button>
+                    <div class="group-assign-dropdown" id="groupAssignDropdown" style="display:none;"></div>
+                </div>
+                <button class="icon-btn" onclick="clearContactSelection()" title="Снять выбор">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="contacts-list" id="contactsList">
+                <div class="empty-state"><i class="fas fa-users"></i><p>Нет контактов</p></div>
+            </div>
+        </div>
+        <div class="contacts-detail-panel" id="contactsDetailPanel">
+            <div class="empty-state large"><i class="fas fa-address-book"></i><p>Выберите контакт</p></div>
+        </div>
+    </div>
+
+</div>
+
+<!-- ─── Модал: написать письмо ─── -->
+<div id="composeModal" class="modal-overlay" style="display:none;">
+    <div class="compose-window">
+        <div class="compose-header" id="composeHeader">
+            <span id="composeTitleText">Новое письмо</span>
+            <span id="draftSavedHint" class="draft-saved-hint" style="display:none;">
+                <i class="fas fa-check"></i> Сохранено
+            </span>
+            <button class="icon-btn" onclick="closeCompose()"><i class="fas fa-times"></i></button>
+        </div>
+        <input type="file" id="composeFileInput" multiple style="display:none;"
+               onchange="handleComposeFiles(this.files); this.value=''">
+        <div class="compose-body">
+            <div class="compose-row">
+                <label>Кому</label>
+                <div class="addr-input-wrap">
+                    <input type="text" id="composeTo" placeholder="email@example.com"
+                           oninput="onAddrInput('composeTo','toDropdown',this.value)"
+                           onkeydown="onAddrKeydown(event,'toDropdown')">
+                    <div class="contacts-dropdown" id="toDropdown" style="display:none;"></div>
+                </div>
+                <button class="icon-btn addr-book-btn" onclick="openAddrPicker('composeTo')" title="Выбрать из контактов">
+                    <i class="fas fa-address-book"></i>
+                </button>
+            </div>
+            <div class="compose-row">
+                <label>Копия</label>
+                <div class="addr-input-wrap">
+                    <input type="text" id="composeCc" placeholder=""
+                           oninput="onAddrInput('composeCc','ccDropdown',this.value)"
+                           onkeydown="onAddrKeydown(event,'ccDropdown')">
+                    <div class="contacts-dropdown" id="ccDropdown" style="display:none;"></div>
+                </div>
+                <button class="icon-btn addr-book-btn" onclick="openAddrPicker('composeCc')" title="Выбрать из контактов">
+                    <i class="fas fa-address-book"></i>
+                </button>
+            </div>
+            <div class="compose-row">
+                <label>Тема</label>
+                <input type="text" id="composeSubject" placeholder="Тема письма">
+            </div>
+            <!-- Зона прикрепления файлов -->
+            <div class="compose-attach-zone" onclick="document.getElementById('composeFileInput').click()">
+                <i class="fas fa-paperclip"></i>
+                <span>Прикрепить файл <span class="attach-zone-hint">или перетащите</span></span>
+            </div>
+            <div id="composeAttachList" class="compose-attach-list"></div>
+            <div id="composeBody" class="compose-textarea" contenteditable="true" data-placeholder="Текст письма..."></div>
+        </div>
+        <div class="compose-footer">
+            <div id="composeError" class="setup-error" style="display:none;"></div>
+            <div class="compose-footer-actions">
+                <button class="btn-primary" onclick="sendMail()" id="sendBtn">
+                    <i class="fas fa-paper-plane"></i> Отправить
+                </button>
+                <button class="ev-btn" onclick="saveDraft(true)" id="saveDraftBtn" title="Сохранить черновик">
+                    <i class="fas fa-save"></i> Черновик
+                </button>
+                <label class="compose-receipt-label" title="Получить уведомление, когда получатель откроет письмо">
+                    <input type="checkbox" id="composeReadReceipt">
+                    <i class="fas fa-eye"></i> Уведомить о прочтении
+                </label>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ─── Диалог выбора адресата ─── -->
+<div id="addrPickerModal" class="modal-overlay" style="display:none;" onclick="closeAddrPickerOverlay(event)">
+    <div class="addr-picker-dialog">
+        <div class="addr-picker-header">
+            <span><i class="fas fa-address-book"></i> Выбор адресата</span>
+            <button class="icon-btn" onclick="closeAddrPicker()"><i class="fas fa-times"></i></button>
+        </div>
+        <div class="addr-picker-search">
+            <i class="fas fa-search"></i>
+            <input type="text" id="addrPickerSearch" placeholder="Поиск по имени или email..."
+                   oninput="renderPickerList(this.value)">
+        </div>
+        <div class="addr-picker-list" id="addrPickerList"></div>
+        <div class="addr-picker-footer">
+            <span class="picker-selected-count" id="pickerCount">Ничего не выбрано</span>
+            <button class="ev-btn" onclick="closeAddrPicker()">Отмена</button>
+            <button class="btn-primary" id="pickerAddBtn" style="width:auto;padding:7px 20px;" onclick="confirmPickerSelection()" disabled>
+                <i class="fas fa-check"></i> Добавить
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- ─── Диалог добавления контакта из письма ─── -->
+<div id="addContactModal" class="modal-overlay" style="display:none;" onclick="closeAddContactModalOverlay(event)">
+    <div class="add-contact-dialog">
+        <div class="ac-dialog-header">
+            <span><i class="fas fa-user-plus"></i> Добавить контакт</span>
+            <button class="icon-btn" onclick="closeAddContactModal()"><i class="fas fa-times"></i></button>
+        </div>
+        <div class="ac-dialog-body">
+            <div class="form-row">
+                <label>Имя</label>
+                <input type="text" id="acName" placeholder="Иван Иванов">
+            </div>
+            <div class="form-row">
+                <label>Email</label>
+                <input type="email" id="acEmail" placeholder="email@example.com">
+            </div>
+            <div class="form-row">
+                <label>Телефон</label>
+                <input type="text" id="acPhone" placeholder="+7 ...">
+            </div>
+            <div class="form-row">
+                <label>Компания</label>
+                <input type="text" id="acCompany" placeholder="ООО Ромашка">
+            </div>
+            <div id="acGroupsRow" class="form-row" style="display:none;">
+                <label>Группы</label>
+                <div class="contact-groups-checklist" id="acGroups"></div>
+            </div>
+            <div id="acError" class="setup-error" style="display:none;"></div>
+        </div>
+        <div class="ac-dialog-footer">
+            <button class="btn-primary" onclick="saveAddContactModal()" id="acSaveBtn">
+                <i class="fas fa-save"></i> Сохранить
+            </button>
+            <button class="ev-btn" onclick="closeAddContactModal()">Отмена</button>
+        </div>
+    </div>
+</div>
+
+<!-- ─── Панель логов ─── -->
+<div id="logPanel" class="modal-overlay" style="display:none;" onclick="closeLogPanelOverlay(event)">
+    <div class="log-dialog">
+        <div class="settings-header">
+            <span><i class="fas fa-terminal"></i> Лог синхронизации</span>
+            <div style="display:flex;gap:6px;">
+                <button class="ev-btn" onclick="loadLogs()" title="Обновить"><i class="fas fa-sync"></i></button>
+                <button class="ev-btn" onclick="clearLogs()" title="Очистить лог"><i class="fas fa-trash"></i></button>
+                <button class="icon-btn" onclick="closeLogPanel()"><i class="fas fa-times"></i></button>
+            </div>
+        </div>
+        <pre class="log-content" id="logContent">Загрузка...</pre>
+    </div>
+</div>
+
+<!-- ─── Настройки ─── -->
+<div id="settingsModal" class="modal-overlay" style="display:none;" onclick="closeSettingsOverlay(event)">
+    <div class="settings-dialog">
+        <div class="settings-header">
+            <span><i class="fas fa-cog"></i> Настройки</span>
+            <button class="icon-btn" onclick="closeSettings()"><i class="fas fa-times"></i></button>
+        </div>
+        <div class="settings-body">
+
+            <!-- Внешний вид -->
+            <div class="settings-section">
+                <div class="settings-section-title">Внешний вид</div>
+                <div class="settings-row">
+                    <span class="settings-label">Тема</span>
+                    <div class="theme-switcher">
+                        <button class="theme-opt" id="themeOptLight" onclick="setTheme('light')">
+                            <i class="fas fa-sun"></i> Светлая
+                        </button>
+                        <button class="theme-opt" id="themeOptDark" onclick="setTheme('dark')">
+                            <i class="fas fa-moon"></i> Тёмная
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Данные -->
+            <div class="settings-section">
+                <div class="settings-section-title">Данные</div>
+                <div class="settings-row col">
+                    <span class="settings-label">Папка базы данных</span>
+                    <div class="settings-path-row">
+                        <span class="settings-path-val" id="settingsDataDir">—</span>
+                        <button class="ev-btn" onclick="openDataDirExplorer()" title="Открыть в проводнике">
+                            <i class="fas fa-folder-open"></i>
+                        </button>
+                    </div>
+                </div>
+                <div class="settings-row col" style="margin-top:8px;">
+                    <span class="settings-label">Папка для сохранения вложений</span>
+                    <div class="settings-path-row">
+                        <input type="text" class="settings-path-val" id="settingsAttachPath"
+                               placeholder="По умолчанию..." style="cursor:text;">
+                        <button class="ev-btn" onclick="browseAttachPath()" title="Выбрать папку">
+                            <i class="fas fa-folder-open"></i>
+                        </button>
+                    </div>
+                    <span class="settings-hint" id="settingsAttachHint"></span>
+                </div>
+            </div>
+
+            <!-- Подпись -->
+            <div class="settings-section">
+                <div class="settings-section-title">Подпись</div>
+                <div class="settings-row col">
+                    <span class="settings-label">Добавляется к каждому новому письму</span>
+                    <textarea id="settingsSignature" class="settings-signature"
+                              placeholder="С уважением, Иван Иванов"></textarea>
+                </div>
+            </div>
+
+            <!-- Синхронизация -->
+            <div class="settings-section">
+                <div class="settings-section-title">Синхронизация</div>
+                <div class="settings-row">
+                    <span class="settings-label">Автопроверка писем</span>
+                    <select class="settings-select" id="settingsAutoSync">
+                        <option value="0">Выключена</option>
+                        <option value="1">Каждую минуту</option>
+                        <option value="5">Каждые 5 минут</option>
+                        <option value="10">Каждые 10 минут</option>
+                        <option value="15">Каждые 15 минут</option>
+                        <option value="30">Каждые 30 минут</option>
+                    </select>
+                </div>
+                <div class="settings-row" id="settingsNotifSection" style="margin-top:8px;">
+                    <span class="settings-label">Уведомления о новых письмах</span>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="settingsNotifications" checked onchange="onNotifEnabledChange()">
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+                <div class="settings-row" id="settingsNotifDurationRow" style="margin-top:8px;">
+                    <span class="settings-label">Длительность уведомления</span>
+                    <select class="settings-select" id="settingsNotifDuration">
+                        <option value="3">3 секунды</option>
+                        <option value="5" selected>5 секунд</option>
+                        <option value="10">10 секунд</option>
+                        <option value="15">15 секунд</option>
+                        <option value="30">30 секунд</option>
+                        <option value="60">1 минута</option>
+                        <option value="300">5 минут</option>
+                        <option value="600">10 минут</option>
+                        <option value="0">Не скрывать</option>
+                    </select>
+                </div>
+                <div class="settings-row" style="margin-top:8px;">
+                    <span class="settings-label">Запуск при старте Windows <span class="settings-hint" style="display:inline">(свёрнуто в трей)</span></span>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="settingsAutostart">
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+                <div class="settings-row" style="margin-top:8px;">
+                    <span class="settings-label">Сбросить кеш синхронизации</span>
+                    <button class="ev-btn warning" onclick="resetSyncCache()" title="Сбрасывает last_uid, при следующей проверке будет загружена начальная выборка">
+                        <i class="fas fa-redo"></i> Сбросить
+                    </button>
+                </div>
+                <div class="settings-hint" style="margin-top:4px;">Используйте, если синхронизация пропускает новые письма. При следующей проверке будет корректно определён стартовый UID.</div>
+            </div>
+
+            <!-- Резервное копирование -->
+            <div class="settings-section">
+                <div class="settings-section-title">Резервное копирование</div>
+                <div class="settings-row">
+                    <span class="settings-label">Автоматическое резервирование</span>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="settingsBackupEnabled" onchange="onBackupEnabledChange()">
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+                <div class="settings-row" id="backupIntervalRow" style="margin-top:8px;display:none;">
+                    <span class="settings-label">Частота</span>
+                    <select class="settings-select" id="settingsBackupInterval">
+                        <option value="1">Ежедневно</option>
+                        <option value="7" selected>Еженедельно</option>
+                        <option value="30">Ежемесячно</option>
+                    </select>
+                </div>
+                <div class="settings-hint" id="settingsLastBackup" style="margin-top:6px;"></div>
+                <div class="backup-actions" style="margin-top:10px;">
+                    <button class="ev-btn" onclick="doBackup()" id="backupBtn">
+                        <i class="fas fa-archive"></i> Создать копию
+                    </button>
+                    <button class="ev-btn" onclick="doRestore()">
+                        <i class="fas fa-history"></i> Восстановить...
+                    </button>
+                    <button class="ev-btn" onclick="invoke('open_backups_folder').catch(()=>{})">
+                        <i class="fas fa-folder-open"></i> Папка с копиями
+                    </button>
+                </div>
+            </div>
+
+        </div>
+        <div class="settings-footer">
+            <button class="btn-primary" onclick="saveSettings()" style="width:auto;padding:8px 24px;">
+                <i class="fas fa-save"></i> Сохранить
+            </button>
+            <button class="ev-btn" onclick="closeSettings()">Отмена</button>
+        </div>
+    </div>
+</div>
+
+<!-- ─── О программе ─── -->
+<div id="aboutModal" class="modal-overlay" style="display:none;" onclick="closeAboutOverlay(event)">
+    <div class="about-dialog">
+        <div class="settings-header">
+            <span><i class="fas fa-info-circle"></i> О программе</span>
+            <button class="icon-btn" onclick="closeAbout()"><i class="fas fa-times"></i></button>
+        </div>
+        <div class="about-body">
+            <div class="about-logo"><img src="favicon.png" style="width:64px;height:64px;object-fit:contain;"></div>
+            <div class="about-name">ДокВис Почта</div>
+            <div class="about-version" id="aboutVersion">Версия 1.0.0</div>
+            <div class="about-desc">Почтовый клиент для работы<br>с электронной почтой</div>
+            <div class="about-links">
+                <a class="about-link" href="#" onclick="openAboutLink(event,'https://docvis.ru')">
+                    <i class="fas fa-globe"></i> docvis.ru
+                </a>
+            </div>
+            <div class="about-copyright">© 2026 ДокВис</div>
+        </div>
+    </div>
+</div>
+
+<!-- ─── Редактирование аккаунта ─── -->
+<div id="editAccountModal" class="modal-overlay" style="display:none;" onclick="closeEditAccountOverlay(event)">
+    <div class="settings-dialog" style="max-width:420px;">
+        <div class="settings-header">
+            <span><i class="fas fa-user-cog"></i> Настройки аккаунта</span>
+            <button class="icon-btn" onclick="closeEditAccount()"><i class="fas fa-times"></i></button>
+        </div>
+        <div style="padding:16px 20px;display:flex;flex-direction:column;gap:12px;">
+            <div class="form-row">
+                <label>Email</label>
+                <input type="email" id="editAccountEmail" readonly style="opacity:.6;cursor:default;">
+            </div>
+            <div class="form-row">
+                <label>Имя отправителя</label>
+                <input type="text" id="editAccountName" placeholder="Иван Иванов">
+            </div>
+            <div class="form-row">
+                <label>Новый пароль</label>
+                <div style="position:relative;">
+                    <input type="password" id="editAccountPassword" placeholder="Оставьте пустым — без изменений" style="width:100%;padding-right:36px;">
+                    <button class="icon-btn" onclick="toggleEditPasswordVisibility()" style="position:absolute;right:4px;top:50%;transform:translateY(-50%);color:var(--text2);" title="Показать/скрыть">
+                        <i class="fas fa-eye" id="editPasswordEyeIcon"></i>
+                    </button>
+                </div>
+            </div>
+            <details id="editAdvancedSettings" class="advanced-details">
+                <summary>Настройки сервера</summary>
+                <div class="form-row" style="margin-top:8px;">
+                    <label>IMAP сервер</label>
+                    <input type="text" id="editImapHost">
+                </div>
+                <div class="form-row">
+                    <label>IMAP порт</label>
+                    <input type="number" id="editImapPort">
+                </div>
+                <div class="form-row">
+                    <label>SMTP сервер</label>
+                    <input type="text" id="editSmtpHost">
+                </div>
+                <div class="form-row">
+                    <label>SMTP порт</label>
+                    <input type="number" id="editSmtpPort">
+                </div>
+            </details>
+            <div id="editAccountError" class="setup-error" style="display:none;"></div>
+            <button class="btn-primary" onclick="saveEditAccount()" id="editAccountSaveBtn">
+                <i class="fas fa-save"></i> Сохранить
+            </button>
+        </div>
+    </div>
+</div>
+
+<script src="js/purify.min.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>

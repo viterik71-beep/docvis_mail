@@ -1,0 +1,66 @@
+{
+  "build": {
+    "beforeBuildCommand": "",
+    "beforeDevCommand": "",
+    "devPath": "../ui",
+    "distDir": "../ui",
+    "withGlobalTauri": true
+  },
+  "package": {
+    "productName": "ДокВис Почта",
+    "version": "1.0.0"
+  },
+  "tauri": {
+    "allowlist": {
+      "all": false,
+      "path": { "all": true },
+      "fs": { "all": true, "scope": ["$APPDATA/**", "$DESKTOP/**"] },
+      "shell": { "open": "^((https?://\\w+)|([A-Za-z]:\\\\)).+" },
+      "window": { "all": true },
+      "dialog": { "all": true }
+    },
+    "bundle": {
+      "active": true,
+      "copyright": "2026 ДокВис",
+      "externalBin": [],
+      "icon": ["icons/icon.ico", "icons/icon.png"],
+      "identifier": "ru.docvis.mail",
+      "longDescription": "Почтовый клиент ДокВис",
+      "shortDescription": "ДокВис Почта",
+      "targets": ["nsis"],
+      "windows": {
+        "webviewInstallMode": { "type": "offlineInstaller" },
+        "nsis": {
+          "languages": ["Russian"],
+          "displayLanguageSelector": false,
+          "installerIcon": "icons/icon.ico",
+          "template": "nsis/installer.nsi"
+        },
+        "certificateThumbprint": null,
+        "digestAlgorithm": "sha256",
+        "timestampUrl": ""
+      }
+    },
+    "security": { "csp": null },
+    "systemTray": {
+      "iconPath": "icons/icon.png",
+      "iconAsTemplate": false,
+      "menuOnLeftClick": false
+    },
+    "windows": [
+      {
+        "fullscreen": false,
+        "height": 720,
+        "width": 1100,
+        "minHeight": 500,
+        "minWidth": 800,
+        "resizable": true,
+        "title": "ДокВис Почта",
+        "center": true,
+        "decorations": true,
+        "transparent": false,
+        "fileDropEnabled": false
+      }
+    ]
+  }
+}

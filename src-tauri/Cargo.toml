@@ -1,0 +1,35 @@
+[package]
+name = "docvis-mail"
+version = "1.0.0"
+description = "ДокВис Почта"
+authors = ["ДокВис Team"]
+license = "MIT"
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "1.5", features = [] }
+
+[dependencies]
+tauri = { version = "1.5", features = ["shell-open", "window-all", "fs-all", "path-all", "dialog-all", "system-tray"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+rusqlite = { version = "0.31", features = ["bundled"] }
+lettre = { version = "0.11", default-features = false, features = ["smtp-transport", "native-tls", "builder", "hostname"] }
+imap = "2.4"
+native-tls = "0.2"
+mailparse = "0.15"
+chrono = { version = "0.4", features = ["serde"] }
+dirs-next = "2.0"
+base64 = "0.21"
+keyring = "2"
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
+
+[profile.release]
+panic = "abort"
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true
