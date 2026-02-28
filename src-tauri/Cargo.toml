@@ -22,6 +22,7 @@ chrono = { version = "0.4", features = ["serde"] }
 dirs-next = "2.0"
 base64 = "0.21"
 keyring = "2"
+image = { version = "0.24", default-features = false, features = ["png"] }
 
 [features]
 default = ["custom-protocol"]

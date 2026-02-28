@@ -406,6 +406,34 @@ FunctionEnd
   !include "{{this}}"
 {{/each}}
 
+; ── Русские строки (Tauri custom messages) ───────────────────────────────────
+LangString deleteAppData           ${LANG_RUSSIAN} "Также удалить данные приложения"
+LangString alreadyInstalled        ${LANG_RUSSIAN} "Уже установлено"
+LangString alreadyInstalledLong    ${LANG_RUSSIAN} "${PRODUCTNAME} уже установлен. Выберите операцию и нажмите «Далее»."
+LangString addOrReinstall          ${LANG_RUSSIAN} "Установить повторно"
+LangString uninstallApp            ${LANG_RUSSIAN} "Удалить ${PRODUCTNAME}"
+LangString chooseMaintenanceOption ${LANG_RUSSIAN} "Выберите действие"
+LangString olderOrUnknownVersionInstalled ${LANG_RUSSIAN} "Обнаружена более старая версия ${PRODUCTNAME}. Рекомендуется удалить её перед установкой. Выберите действие."
+LangString uninstallBeforeInstalling ${LANG_RUSSIAN} "Удалить перед установкой"
+LangString dontUninstall           ${LANG_RUSSIAN} "Не удалять"
+LangString dontUninstallDowngrade  ${LANG_RUSSIAN} "Не удалять (не рекомендуется)"
+LangString choowHowToInstall       ${LANG_RUSSIAN} "Выберите способ установки"
+LangString newerVersionInstalled   ${LANG_RUSSIAN} "Уже установлена более новая версия ${PRODUCTNAME}. Откат не рекомендуется. Выберите действие."
+LangString unableToUninstall       ${LANG_RUSSIAN} "Не удалось удалить предыдущую версию."
+LangString older                   ${LANG_RUSSIAN} "старая"
+LangString unknown                 ${LANG_RUSSIAN} "неизвестная"
+LangString installingWebview2      ${LANG_RUSSIAN} "Установка WebView2..."
+LangString webview2Downloading     ${LANG_RUSSIAN} "Загрузка установщика WebView2..."
+LangString webview2DownloadSuccess ${LANG_RUSSIAN} "Установщик WebView2 загружен"
+LangString webview2DownloadError   ${LANG_RUSSIAN} "Ошибка загрузки WebView2"
+LangString webview2AbortError      ${LANG_RUSSIAN} "Не удалось установить WebView2"
+LangString webview2InstallSuccess  ${LANG_RUSSIAN} "WebView2 успешно установлен"
+LangString webview2InstallError    ${LANG_RUSSIAN} "Не удалось установить WebView2"
+LangString appRunning              ${LANG_RUSSIAN} "${PRODUCTNAME} сейчас запущен. Закройте его перед установкой."
+LangString appRunningOkKill        ${LANG_RUSSIAN} "${PRODUCTNAME} сейчас запущен. Нажмите ОК для закрытия или Отмена."
+LangString failedToKillApp         ${LANG_RUSSIAN} "Не удалось закрыть ${PRODUCTNAME}. Закройте программу вручную."
+LangString silentDowngrades        ${LANG_RUSSIAN} "Тихая установка более старой версии запрещена."
+
 !macro SetContext
   !if "${INSTALLMODE}" == "currentUser"
     SetShellVarContext current
@@ -645,6 +673,9 @@ Section Install
       Call CreateDesktopShortcut
       Call CreateStartMenuShortcut
   shortcuts_done:
+
+  ; Уведомляем оболочку Windows об изменении иконок (обновляет ярлыки на рабочем столе)
+  System::Call "shell32::SHChangeNotify(i 0x8000000, i 0, i 0, i 0)"
 
   ; Auto close this page for passive mode
   ${IfThen} $PassiveMode == 1 ${|} SetAutoClose true ${|}

@@ -1089,7 +1089,7 @@ const MAIL_NOTIF_BODY: &str = r##"
 [xml]$xaml = '<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" WindowStyle="None" AllowsTransparency="True" Background="Transparent" Topmost="True" ShowInTaskbar="False" Width="340" Height="90" ResizeMode="NoResize"><Border Background="#FF1A1B2E" BorderBrush="#FF6366F1" BorderThickness="1" CornerRadius="8" Name="MainBorder"><Grid Margin="10,8"><Grid.ColumnDefinitions><ColumnDefinition Width="40"/><ColumnDefinition Width="*"/><ColumnDefinition Width="44"/></Grid.ColumnDefinitions><Border Grid.Column="0" Width="32" Height="32" CornerRadius="16" Background="#FF6366F1" VerticalAlignment="Center"><TextBlock Foreground="White" FontSize="16" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center" Name="AvatarText"/></Border><StackPanel Grid.Column="1" Margin="8,0,0,0" VerticalAlignment="Center"><TextBlock Foreground="#FF9999BB" FontSize="11" Name="TitleBlock"/><TextBlock Foreground="White" FontWeight="SemiBold" FontSize="13" TextTrimming="CharacterEllipsis" Name="SenderBlock"/><TextBlock Foreground="#FFCCCCCC" FontSize="12" TextTrimming="CharacterEllipsis" Name="MsgBlock"/></StackPanel><StackPanel Grid.Column="2" VerticalAlignment="Top" HorizontalAlignment="Center" Margin="0,2,0,0"><TextBlock Text="&#215;" Foreground="#FF666666" FontSize="16" HorizontalAlignment="Center" Cursor="Hand" Name="CloseBtn"/><TextBlock Text="&#9881;" Foreground="#FF666666" FontSize="13" HorizontalAlignment="Center" Cursor="Hand" Margin="0,4,0,0" Name="SettingsBtn"/></StackPanel></Grid></Border></Window>'
 $reader = New-Object System.Xml.XmlNodeReader $xaml
 $window = [Windows.Markup.XamlReader]::Load($reader)
-$window.FindName('TitleBlock').Text = 'ДОКВИС Почта · ' + (Get-Date).ToString('HH:mm')
+$window.FindName('TitleBlock').Text = 'ДокВис Почта · ' + (Get-Date).ToString('HH:mm')
 $window.FindName('SenderBlock').Text = $fromName
 $window.FindName('MsgBlock').Text = $subject
 if ($fromName.Length -gt 0) {
@@ -2722,7 +2722,7 @@ fn get_all_unread_counts(state: State<AppState>) -> Result<Vec<AccountUnread>, S
 
 const AUTOSTART_REG_KEY: &str =
     "Software\\Microsoft\\Windows\\CurrentVersion\\Run";
-const AUTOSTART_VALUE: &str = "ДОКВИС Почта";
+const AUTOSTART_VALUE: &str = "ДокВис Почта";
 
 #[tauri::command]
 fn get_autostart() -> bool {
@@ -2806,7 +2806,7 @@ fn main() {
 
     let tray = SystemTray::new()
         .with_menu(tray_menu)
-        .with_tooltip("ДОКВИС Почта");
+        .with_tooltip("ДокВис Почта");
 
     tauri::Builder::default()
         .system_tray(tray)
@@ -2848,6 +2848,16 @@ fn main() {
             }
         })
         .setup(move |app| {
+            // Устанавливаем иконку окна из PNG (256×256 → Windows масштабирует вниз, что даёт чёткость)
+            if let Some(w) = app.get_window("main") {
+                let png_bytes = include_bytes!("../icons/icon.png");
+                if let Ok(img) = image::load_from_memory_with_format(png_bytes, image::ImageFormat::Png) {
+                    let rgba = img.into_rgba8();
+                    let (width, height) = (rgba.width(), rgba.height());
+                    let _ = w.set_icon(tauri::Icon::Rgba { rgba: rgba.into_raw(), width, height });
+                }
+            }
+
             // Запуск с --minimized: окно сразу скрываем
             if start_minimized {
                 if let Some(w) = app.get_window("main") {

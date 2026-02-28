@@ -1,6 +1,6 @@
 {
   "build": {
-    "beforeBuildCommand": "",
+    "beforeBuildCommand": " ",
     "beforeDevCommand": "",
     "devPath": "../ui",
     "distDir": "../ui",
