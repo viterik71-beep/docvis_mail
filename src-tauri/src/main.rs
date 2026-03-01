@@ -2683,10 +2683,10 @@ fn get_default_attach_path() -> String {
 }
 
 #[tauri::command]
-fn scan_archive(file_path: String) -> ArchiveScanResult {
-    let ext = std::path::Path::new(&file_path)
-        .extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
-    scan_archive_by_ext(&file_path, &ext)
+fn scan_archive(file_path: String, ext: String) -> ArchiveScanResult {
+    // ext передаётся из JS по оригинальному имени файла,
+    // т.к. временный file_path может не иметь расширения
+    scan_archive_by_ext(&file_path, &ext.to_lowercase())
 }
 
 #[tauri::command]

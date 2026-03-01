@@ -2322,9 +2322,10 @@ const SCANNABLE_ARCHIVE_EXT = new Set(['zip', '7z', 'rar']);
 function showSecurityConfirm(title, bodyLines, btnOkLabel) {
     return new Promise(resolve => {
         const overlay = document.createElement('div');
-        overlay.className = 'modal-overlay active';
+        // Inline-стили гарантируют фон независимо от порядка загрузки CSS
+        overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;padding:20px;z-index:99999';
         overlay.innerHTML = `
-          <div class="modal" style="max-width:460px">
+          <div class="modal" style="max-width:460px;position:relative;z-index:100000">
             <div class="modal-header" style="color:#ef4444">
               <i class="fas fa-shield-virus"></i> ${escHtml(title)}
             </div>
@@ -2350,28 +2351,33 @@ async function openAttachment(filePath, filename) {
     }
 
     // Архив ZIP/7z/RAR — сканируем содержимое перед открытием
+    // ext передаём явно, т.к. filePath (temp) может не иметь расширения
     if (protect && SCANNABLE_ARCHIVE_EXT.has(ext)) {
         let proceed = true;
         try {
-            const scan = await invoke('scan_archive', { filePath });
+            const scan = await invoke('scan_archive', { filePath, ext });
             if (scan.dangerous.length > 0) {
                 const list = scan.dangerous.slice(0, 6).join('\n');
                 const more = scan.dangerous.length > 6 ? `...и ещё ${scan.dangerous.length - 6}` : '';
                 proceed = await showSecurityConfirm(
-                    'Архив содержит опасные файлы',
+                    `${ext.toUpperCase()}: обнаружены опасные файлы`,
                     `${list}${more ? '\n' + more : ''}\n\nАрхив нейтрализован (переименован).\nВсё равно открыть папку?`,
                     'Всё равно открыть'
                 );
             } else if (scan.encrypted) {
                 proceed = await showSecurityConfirm(
-                    'Архив зашифрован',
+                    `${ext.toUpperCase()}: архив зашифрован`,
                     'Содержимое не проверено — проверка невозможна без пароля.\n\nОткрывайте только если доверяете отправителю.',
                     'Открыть'
                 );
             } else if (scan.no_tool) {
-                showSavedToast(null, 'RAR: WinRAR не найден, проверка пропущена');
+                showSavedToast(null, `${ext.toUpperCase()}: инструмент не найден, проверка пропущена`);
+            } else {
+                showSavedToast(null, `${ext.toUpperCase()}: проверен — опасных файлов не найдено`);
             }
-        } catch (_) { /* ошибка сканирования — открываем без проверки */ }
+        } catch (_) {
+            showSavedToast(null, `${ext.toUpperCase()}: не удалось проверить содержимое`);
+        }
         if (!proceed) return;
     }
 
