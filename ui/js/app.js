@@ -2318,6 +2318,28 @@ const DANGEROUS_ATTACH_EXT = new Set([
 ]);
 const SCANNABLE_ARCHIVE_EXT = new Set(['zip', '7z', 'rar']);
 
+/** Кастомный модал-предупреждение — возвращает Promise<bool> */
+function showSecurityConfirm(title, bodyLines, btnOkLabel) {
+    return new Promise(resolve => {
+        const overlay = document.createElement('div');
+        overlay.className = 'modal-overlay active';
+        overlay.innerHTML = `
+          <div class="modal" style="max-width:460px">
+            <div class="modal-header" style="color:#ef4444">
+              <i class="fas fa-shield-virus"></i> ${escHtml(title)}
+            </div>
+            <div class="modal-body" style="white-space:pre-wrap;font-size:13px;line-height:1.6">${escHtml(bodyLines)}</div>
+            <div class="modal-footer" style="display:flex;gap:8px;justify-content:flex-end;padding-top:12px">
+              <button class="ev-btn" id="_secCancel" style="background:var(--bg-secondary)">Отмена</button>
+              <button class="ev-btn" id="_secOk" style="background:#ef4444;color:#fff">${escHtml(btnOkLabel)}</button>
+            </div>
+          </div>`;
+        document.body.appendChild(overlay);
+        overlay.querySelector('#_secOk').onclick  = () => { overlay.remove(); resolve(true); };
+        overlay.querySelector('#_secCancel').onclick = () => { overlay.remove(); resolve(false); };
+    });
+}
+
 async function openAttachment(filePath, filename) {
     const protect = localStorage.getItem('mail-attach-protect') !== 'false';
     const ext = (filename?.split('.').pop() || '').toLowerCase();
@@ -2329,24 +2351,28 @@ async function openAttachment(filePath, filename) {
 
     // Архив ZIP/7z/RAR — сканируем содержимое перед открытием
     if (protect && SCANNABLE_ARCHIVE_EXT.has(ext)) {
+        let proceed = true;
         try {
             const scan = await invoke('scan_archive', { filePath });
             if (scan.dangerous.length > 0) {
                 const list = scan.dangerous.slice(0, 6).join('\n');
-                const more = scan.dangerous.length > 6 ? `\n...и ещё ${scan.dangerous.length - 6}` : '';
-                const ok = confirm(
-                    `⚠ Архив содержит опасные файлы:\n\n${list}${more}\n\nАрхив нейтрализован (переименован).\nВсё равно открыть папку?`
+                const more = scan.dangerous.length > 6 ? `...и ещё ${scan.dangerous.length - 6}` : '';
+                proceed = await showSecurityConfirm(
+                    'Архив содержит опасные файлы',
+                    `${list}${more ? '\n' + more : ''}\n\nАрхив нейтрализован (переименован).\nВсё равно открыть папку?`,
+                    'Всё равно открыть'
                 );
-                if (!ok) return;
             } else if (scan.encrypted) {
-                const ok = confirm(
-                    '⚠ Архив зашифрован — содержимое не проверено.\n\nОткрывайте только если доверяете отправителю.\nПродолжить?'
+                proceed = await showSecurityConfirm(
+                    'Архив зашифрован',
+                    'Содержимое не проверено — проверка невозможна без пароля.\n\nОткрывайте только если доверяете отправителю.',
+                    'Открыть'
                 );
-                if (!ok) return;
             } else if (scan.no_tool) {
                 showSavedToast(null, 'RAR: WinRAR не найден, проверка пропущена');
             }
-        } catch (_) { /* сканирование не критично */ }
+        } catch (_) { /* ошибка сканирования — открываем без проверки */ }
+        if (!proceed) return;
     }
 
     try {

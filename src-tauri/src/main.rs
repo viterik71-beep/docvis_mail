@@ -2536,12 +2536,12 @@ fn is_dangerous_attach_ext(filename: &str) -> bool {
     DANGEROUS_ATTACH_EXT.contains(&ext.as_str())
 }
 
-/// "invoice.exe" → "invoice._exe", имя без расширения не меняется
+/// "invoice.exe" → "invoice.[virus]_exe", "doc.zip" → "doc.[virus]_zip"
 fn neutralize_filename(name: &str) -> String {
     if let Some(pos) = name.rfind('.') {
-        format!("{}._{}", &name[..pos], &name[pos + 1..])
+        format!("{}.[virus]_{}", &name[..pos], &name[pos + 1..])
     } else {
-        name.to_string()
+        format!("{}.[virus]", name)
     }
 }
 
