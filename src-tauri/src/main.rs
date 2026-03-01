@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU32, AtomicBool, Ordering};
 use tauri::{State, Manager, SystemTray, SystemTrayMenu, SystemTrayEvent, CustomMenuItem};
-use chrono::Datelike;
+use chrono::{Datelike, TimeZone};
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 
@@ -1746,8 +1746,11 @@ fn auto_save_attachments(
     state: State<AppState>,
     email_ids: Vec<i64>,
     save_base: String,
+    neutralize: Option<bool>,
 ) -> Result<(), String> {
     if email_ids.is_empty() { return Ok(()); }
+
+    let do_neutralize = neutralize.unwrap_or(true);
 
     // Если путь не задан — используем Рабочий стол / Почта
     let base = if save_base.is_empty() {
@@ -1759,32 +1762,53 @@ fn auto_save_attachments(
     };
 
     let conn = state.db.lock().unwrap();
-    let now = chrono::Local::now();
-    let month_ru = match now.month() {
-        1=>"январь", 2=>"февраль", 3=>"март", 4=>"апрель",
-        5=>"май", 6=>"июнь", 7=>"июль", 8=>"август",
-        9=>"сентябрь", 10=>"октябрь", 11=>"ноябрь", _=>"декабрь",
-    };
-    let dest_dir = base
-        .join(now.format("%Y").to_string())
-        .join(month_ru)
-        .join(now.format("%d").to_string())
-        .join(now.format("%H-%M").to_string());
-    std::fs::create_dir_all(&dest_dir).map_err(|e| e.to_string())?;
 
     for email_id in &email_ids {
-        let mut stmt = conn.prepare(
+        // Берём дату из письма, а не с компьютера
+        let date_ts: i64 = conn.query_row(
+            "SELECT date_ts FROM emails WHERE id=?1",
+            params![email_id],
+            |r| r.get(0),
+        ).unwrap_or_else(|_| chrono::Local::now().timestamp());
+
+        let email_dt = chrono::Local.timestamp_opt(date_ts, 0)
+            .single()
+            .unwrap_or_else(|| chrono::Local::now());
+
+        let month_ru = match email_dt.month() {
+            1=>"январь", 2=>"февраль", 3=>"март", 4=>"апрель",
+            5=>"май", 6=>"июнь", 7=>"июль", 8=>"август",
+            9=>"сентябрь", 10=>"октябрь", 11=>"ноябрь", _=>"декабрь",
+        };
+        let dest_dir = base
+            .join(email_dt.format("%Y").to_string())
+            .join(month_ru)
+            .join(email_dt.format("%d").to_string())
+            .join(email_dt.format("%H-%M").to_string());
+        if std::fs::create_dir_all(&dest_dir).is_err() { continue; }
+
+        let mut stmt = match conn.prepare(
             "SELECT id, file_path, filename FROM attachments WHERE email_id=?1 AND saved_path IS NULL"
-        ).map_err(|e| e.to_string())?;
-        let rows: Vec<(i64, String, String)> = stmt.query_map(params![email_id], |r| {
+        ) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+        let rows: Vec<(i64, String, String)> = match stmt.query_map(params![email_id], |r| {
             Ok((r.get(0)?, r.get(1)?, r.get(2)?))
-        }).map_err(|e| e.to_string())?
-        .filter_map(|r| r.ok()).collect();
+        }) {
+            Ok(mapped) => mapped.filter_map(|r| r.ok()).collect(),
+            Err(_) => continue,
+        };
 
         for (att_id, file_path, filename) in rows {
             let src = std::path::Path::new(&file_path);
             if !src.exists() { continue; }
-            let dest = dest_dir.join(&filename);
+            let dest_name = if do_neutralize && is_dangerous_attach_ext(&filename) {
+                neutralize_filename(&filename)
+            } else {
+                filename.clone()
+            };
+            let dest = dest_dir.join(&dest_name);
             if std::fs::copy(src, &dest).is_ok() {
                 let saved = dest.to_string_lossy().to_string();
                 conn.execute(
@@ -2545,14 +2569,11 @@ fn open_attachment(
     file_path: String,
     save_base: Option<String>,
     subfolder: Option<String>,
-    neutralize: Option<bool>,
 ) -> Result<String, String> {
     let src = std::path::Path::new(&file_path);
     if !src.exists() {
         return Err("Файл не найден".to_string());
     }
-
-    let do_neutralize = neutralize.unwrap_or(false);
 
     // Проверяем: есть ли уже сохранённый путь для этого вложения
     let saved: Option<String> = {
@@ -2566,46 +2587,9 @@ fn open_attachment(
 
     let sub = subfolder.as_deref();
 
-    /// Применяет нейтрализацию к имени файла если нужно
-    fn dest_filename(src: &std::path::Path, neutralize: bool) -> String {
-        let raw = src.file_name()
-            .unwrap_or_else(|| std::ffi::OsStr::new("attachment"))
-            .to_string_lossy()
-            .to_string();
-        if neutralize && is_dangerous_attach_ext(&raw) {
-            neutralize_filename(&raw)
-        } else {
-            raw
-        }
-    }
-
     let open_path = if let Some(ref sp) = saved {
         if std::path::Path::new(sp).exists() {
-            // Файл уже сохранён. Если защита включена и имя опасное — переименовываем на месте.
-            // Это покрывает случай когда файл был сохранён до включения защиты.
-            if do_neutralize {
-                let sp_path = std::path::Path::new(sp.as_str());
-                let sp_name = sp_path.file_name()
-                    .unwrap_or_default().to_string_lossy().to_string();
-                if is_dangerous_attach_ext(&sp_name) {
-                    let new_name = neutralize_filename(&sp_name);
-                    let new_path = sp_path.parent()
-                        .unwrap_or(sp_path).join(&new_name);
-                    if std::fs::rename(sp_path, &new_path).is_ok() {
-                        let new_str = new_path.to_string_lossy().to_string();
-                        let conn = state.db.lock().unwrap();
-                        conn.execute("UPDATE attachments SET saved_path=?1 WHERE file_path=?2",
-                            params![new_str, file_path]).ok();
-                        new_str
-                    } else {
-                        sp.clone()
-                    }
-                } else {
-                    sp.clone()
-                }
-            } else {
-                sp.clone()
-            }
+            sp.clone()
         } else {
             // Файл был перемещён/удалён — сохраняем заново
             let base = save_base.as_deref()
@@ -2616,7 +2600,7 @@ fn open_attachment(
                 });
             let dest_dir = build_attach_dest_dir(&base, sub);
             std::fs::create_dir_all(&dest_dir).ok();
-            let fname = dest_filename(src, do_neutralize);
+            let fname = src.file_name().unwrap_or_default().to_string_lossy().to_string();
             let dest = dest_dir.join(&fname);
             std::fs::copy(src, &dest).map_err(|e| e.to_string())?;
             let saved_str = dest.to_string_lossy().to_string();
@@ -2635,7 +2619,7 @@ fn open_attachment(
             });
         let dest_dir = build_attach_dest_dir(&base, sub);
         std::fs::create_dir_all(&dest_dir).map_err(|e| e.to_string())?;
-        let fname = dest_filename(src, do_neutralize);
+        let fname = src.file_name().unwrap_or_default().to_string_lossy().to_string();
         let dest = dest_dir.join(&fname);
         std::fs::copy(src, &dest).map_err(|e| e.to_string())?;
         let saved_str = dest.to_string_lossy().to_string();

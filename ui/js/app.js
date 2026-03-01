@@ -78,7 +78,7 @@ async function syncAllAccountsBackground() {
             const newItems = await invoke('sync_folder', { accountId: a.id, folder: 'INBOX', offset: 0, leaveOnServer });
             if (newItems && newItems.length > 0) {
                 totalNew += newItems.length;
-                if (saveBase) invoke('auto_save_attachments', { emailIds: newItems.map(n => n.id), saveBase }).catch(() => {});
+                if (saveBase) { const neutralize = localStorage.getItem('mail-attach-protect') !== 'false'; invoke('auto_save_attachments', { emailIds: newItems.map(n => n.id), saveBase, neutralize }).catch(() => {}); }
                 if (notifEnabled) {
                     playMailSound();
                     for (const item of newItems.slice(0, 3)) {
@@ -139,7 +139,8 @@ async function startFullSync() {
         const label = p.cancelled ? 'Остановлено' : `Загружено ${p.fetched} из ${p.total}`;
         status.textContent = `${label} (новых: ${p.inserted})`;
         if (saveBase && p.new_ids && p.new_ids.length > 0) {
-            invoke('auto_save_attachments', { emailIds: p.new_ids, saveBase }).catch(() => {});
+            const neutralize = localStorage.getItem('mail-attach-protect') !== 'false';
+            invoke('auto_save_attachments', { emailIds: p.new_ids, saveBase, neutralize }).catch(() => {});
         }
     });
 
@@ -1261,7 +1262,8 @@ async function syncCurrentFolder() {
         sbStatus('ok', `Готово (${(ms/1000).toFixed(1)}с)`, newItems.length);
         if (newItems && newItems.length > 0) {
             const saveBase = localStorage.getItem('mail-attach-path') || '';
-            invoke('auto_save_attachments', { emailIds: newItems.map(n => n.id), saveBase }).catch(() => {});
+            const neutralize = localStorage.getItem('mail-attach-protect') !== 'false';
+            invoke('auto_save_attachments', { emailIds: newItems.map(n => n.id), saveBase, neutralize }).catch(() => {});
             if (imapFolderName() === 'INBOX' && localStorage.getItem('mail-notifications') !== 'false') {
                 const dur = parseInt(localStorage.getItem('mail-notif-duration') || '5');
                 playMailSound();
@@ -1339,7 +1341,8 @@ async function loadMoreEmails() {
         await updateUnreadBadge();
         if (newItems.length > 0) {
             const saveBase = localStorage.getItem('mail-attach-path') || '';
-            invoke('auto_save_attachments', { emailIds: newItems.map(n => n.id), saveBase }).catch(() => {});
+            const neutralize = localStorage.getItem('mail-attach-protect') !== 'false';
+            invoke('auto_save_attachments', { emailIds: newItems.map(n => n.id), saveBase, neutralize }).catch(() => {});
         }
     } catch (e) {
         alert('Ошибка загрузки: ' + e);
@@ -1532,7 +1535,7 @@ async function openEmail(id) {
                 </div>
                 <div class="attachments-list">
                     ${attachments.map(a => `
-                        <div class="attach-item" data-path="${escHtml(a.file_path)}" onclick="openAttachment(this.dataset.path)">
+                        <div class="attach-item" data-path="${escHtml(a.file_path)}" data-name="${escHtml(a.filename)}" onclick="openAttachment(this.dataset.path, this.dataset.name)">
                             ${attachIconHtml(a.filename, a.mime_type)}
                             <div class="attach-info">
                                 <span class="attach-name">${escHtml(a.filename)}</span>
@@ -2304,20 +2307,38 @@ function showComposeError(msg) {
 
 // ── Утилиты ────────────────────────────────────────────────────────────────
 
-async function openAttachment(filePath) {
-    const neutralize = localStorage.getItem('mail-attach-protect') !== 'false';
+const DANGEROUS_ATTACH_EXT = new Set([
+    'exe','msi','com','scr','pif','dll','cpl','ocx',
+    'bat','cmd','ps1','psm1','psd1','ps2',
+    'vbs','vbe','jse','wsf','wsh',
+    'hta','lnk','url','reg','inf',
+    'docm','dotm','xlsm','xlsb','xltm','pptm','potm','ppam','ppsm',
+    'iso','img','cab','arj','ace','lzh','lha',
+    'jar','lz','tar','uue','xz','z','zipx','001','bz2','gz',
+]);
+
+async function openAttachment(filePath, filename) {
+    const protect = localStorage.getItem('mail-attach-protect') !== 'false';
+    if (protect && filename) {
+        const ext = filename.includes('.') ? filename.split('.').pop().toLowerCase() : '';
+        if (DANGEROUS_ATTACH_EXT.has(ext)) {
+            showSavedToast(null, 'Опасный файл нейтрализован');
+        }
+    }
     try {
         const saveBase = localStorage.getItem('mail-attach-path') || null;
         const subfolder = currentFolder === 'Sent' ? 'Отправленные' : null;
-        const savedTo = await invoke('open_attachment', { filePath, saveBase, subfolder, neutralize });
-        showSavedToast(savedTo);
+        const savedTo = await invoke('open_attachment', { filePath, saveBase, subfolder });
+        if (!protect || !filename || !DANGEROUS_ATTACH_EXT.has((filename.split('.').pop() || '').toLowerCase())) {
+            showSavedToast(savedTo);
+        }
     } catch (e) {
         alert('Не удалось открыть файл: ' + e);
     }
 }
 
-function showSavedToast(path) {
-    // Показываем уведомление куда сохранился файл
+function showSavedToast(path, customMsg) {
+    // Показываем уведомление куда сохранился файл (или произвольный текст)
     let toast = document.getElementById('attachToast');
     if (!toast) {
         toast = document.createElement('div');
@@ -2325,10 +2346,14 @@ function showSavedToast(path) {
         toast.className = 'attach-toast';
         document.body.appendChild(toast);
     }
-    // Берём только имя папки (последние 3 части пути: дата/время)
-    const parts = path.replace(/\\/g, '/').split('/');
-    const short = parts.slice(-4).join('/');
-    toast.textContent = 'Сохранено: Почта/' + short;
+    if (customMsg) {
+        toast.textContent = customMsg;
+    } else {
+        // Берём только имя папки (последние 3 части пути: дата/время)
+        const parts = path.replace(/\\/g, '/').split('/');
+        const short = parts.slice(-4).join('/');
+        toast.textContent = 'Сохранено: Почта/' + short;
+    }
     toast.classList.add('visible');
     clearTimeout(toast._timer);
     toast._timer = setTimeout(() => toast.classList.remove('visible'), 3000);
