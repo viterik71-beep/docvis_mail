@@ -441,12 +441,62 @@ function playMailSound() {
     } catch (_) {}
 }
 
-// Открываем ссылки из iframe-писем в браузере по умолчанию
+// Открываем ссылки из iframe-писем с предупреждением
 window.addEventListener('message', function(e) {
     if (e.data && e.data.type === 'mailLink' && e.data.url) {
-        window.__TAURI__.shell.open(e.data.url);
+        showLinkWarning(e.data.url);
     }
 });
+
+const URL_SHORTENERS = new Set([
+    'bit.ly','tinyurl.com','t.co','goo.gl','ow.ly','is.gd','buff.ly',
+    'short.link','rb.gy','clck.ru','vk.cc','u.to',
+]);
+
+async function showLinkWarning(url) {
+    const warnings = [];
+    let parsedHost = '';
+    try {
+        const u = new URL(url);
+        parsedHost = u.hostname.toLowerCase();
+        if (u.protocol === 'http:')
+            warnings.push('Незащищённое соединение (HTTP, не HTTPS)');
+        if (/^(\d{1,3}\.){3}\d{1,3}$/.test(parsedHost))
+            warnings.push('Адрес ведёт на IP-адрес, а не на домен');
+        if (URL_SHORTENERS.has(parsedHost))
+            warnings.push('Сокращённая ссылка — конечный адрес скрыт');
+        if (/[^\x00-\x7F]/.test(parsedHost))
+            warnings.push('Домен содержит не-ASCII символы (возможна подмена)');
+    } catch (_) {
+        warnings.push('Нераспознанный формат ссылки');
+    }
+
+    const displayUrl = url.length > 120 ? url.slice(0, 117) + '…' : url;
+
+    const overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;padding:20px;z-index:99999';
+    const warnColor = warnings.length ? '#f59e0b' : 'var(--text-secondary)';
+    overlay.innerHTML = `
+      <div class="modal" style="max-width:520px;z-index:100000">
+        <div class="modal-header" style="color:${warnColor}">
+          <i class="fas fa-link"></i> Переход по ссылке
+        </div>
+        <div class="modal-body">
+          <div style="font-size:12px;color:var(--text-secondary);margin-bottom:6px">Адрес назначения:</div>
+          <div style="background:var(--bg-secondary);border-radius:4px;padding:8px 10px;font-family:monospace;font-size:12px;word-break:break-all;max-height:80px;overflow-y:auto">${escHtml(displayUrl)}</div>
+          ${warnings.length ? `<div style="margin-top:10px;font-size:13px;color:#f59e0b;line-height:1.7">⚠ ${warnings.map(escHtml).join('<br>⚠ ')}</div>` : '<div style="margin-top:8px;font-size:13px;color:var(--text-secondary)">Ссылка выглядит безопасно.</div>'}
+        </div>
+        <div class="modal-footer" style="display:flex;gap:8px;justify-content:flex-end;padding-top:12px">
+          <button class="ev-btn" id="_lnkCancel" style="background:var(--bg-secondary)">Отмена</button>
+          <button class="ev-btn" id="_lnkOpen" style="background:${warnings.length ? '#f59e0b' : 'var(--accent)'};color:#fff">
+            <i class="fas fa-external-link-alt"></i> Открыть в браузере
+          </button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+    overlay.querySelector('#_lnkOpen').onclick   = () => { overlay.remove(); window.__TAURI__.shell.open(url); };
+    overlay.querySelector('#_lnkCancel').onclick = () => overlay.remove();
+}
 
 // ── Инициализация ──────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', async () => {
