@@ -342,6 +342,45 @@ mark.search-hl {
 .select-toolbar input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; }
 .select-count { color: var(--text2); flex: 1; }
 .select-toolbar .ev-btn { padding: 5px 12px; font-size: 12px; }
+/* Панель фильтра и сортировки */
+.filter-sort-bar {
+    display: flex; align-items: center; gap: 4px; flex-wrap: wrap;
+    padding: 6px 10px; background: var(--bg2); border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+}
+.filter-chip {
+    padding: 3px 10px; border-radius: 12px; border: 1px solid var(--border);
+    background: transparent; color: var(--text2); font-size: 12px; cursor: pointer;
+    white-space: nowrap; transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+.filter-chip:hover { background: var(--bg3); color: var(--text); }
+.filter-chip.active {
+    background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 500;
+}
+.filter-chip.mark-all-read-btn { border-color: var(--accent); color: var(--accent); margin-left: 4px; }
+.filter-chip.mark-all-read-btn:hover { background: var(--accent); color: #fff; }
+.sort-btn-wrap { position: relative; margin-left: auto; }
+.sort-icon-btn {
+    width: 28px; height: 28px; border-radius: 8px; border: 1px solid var(--border);
+    background: transparent; color: var(--text2); font-size: 13px; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    transition: background 0.12s, color 0.12s;
+}
+.sort-icon-btn:hover, .sort-icon-btn.active { background: var(--bg3); color: var(--accent); }
+.sort-dropdown {
+    display: none; position: absolute; top: calc(100% + 4px); right: 0;
+    background: var(--bg2); border: 1px solid var(--border);
+    border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+    min-width: 160px; z-index: 400; overflow: hidden;
+}
+.sort-dropdown.open { display: block; }
+.sort-option {
+    padding: 8px 14px; font-size: 13px; color: var(--text); cursor: pointer;
+    transition: background 0.1s;
+}
+.sort-option:hover { background: var(--bg3); }
+.sort-option.active { color: var(--accent); font-weight: 500; }
+
 .move-folder-wrap { position: relative; }
 .move-folder-popup {
     display: none; position: absolute; top: calc(100% + 4px); left: 0;
@@ -398,6 +437,8 @@ mark.search-hl {
 .ev-btn.danger:hover { background: rgba(239,68,68,0.15); border-color: var(--danger); color: var(--danger); }
 .ev-btn.warning:hover { background: rgba(234,88,12,0.12); border-color: #ea580c; color: #ea580c; }
 .ev-btn.star-active { color: var(--star); border-color: var(--star); }
+.ev-btn.blacklist-active { color: var(--danger); border-color: var(--danger); }
+.ev-btn.blacklist-active:hover { background: rgba(239,68,68,0.15); }
 
 .email-view-body {
     flex: 1; display: flex; flex-direction: column; overflow: hidden; padding: 0;
@@ -728,7 +769,8 @@ mark.search-hl {
 .group-assign-item:hover { background: var(--bg3); }
 .group-assign-item i { color: var(--accent); font-size: 12px; }
 .contact-list-info { flex: 1; overflow: hidden; }
-.contact-list-name { font-size: 13px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.contact-list-name { font-size: 13px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: flex; align-items: center; gap: 5px; }
+.cli-blacklist-icon { color: var(--danger); font-size: 10px; flex-shrink: 0; }
 .contact-list-email { font-size: 11px; color: var(--text2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* Правая панель контактов */
@@ -905,6 +947,9 @@ mark.search-hl {
 }
 .group-chip:hover .group-chip-del { opacity: 1; }
 .group-chip-del:hover { color: var(--danger); }
+.group-chip.blacklist-chip { color: var(--danger); border-color: rgba(239,68,68,0.3); }
+.group-chip.blacklist-chip:hover { border-color: var(--danger); }
+.group-chip.blacklist-chip.active { background: rgba(239,68,68,0.12); border-color: var(--danger); color: var(--danger); }
 .group-add-btn {
     padding: 4px 9px; border-radius: 20px; font-size: 12px;
     background: none; border: 1px dashed var(--border);

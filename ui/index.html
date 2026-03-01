@@ -86,6 +86,9 @@
         <button class="app-tab" id="tabContacts" onclick="switchView('contacts')">
             <i class="fas fa-address-book"></i> Контакты
         </button>
+        <button class="app-tab-icon" onclick="openAttachFolder()" title="Открыть папку сохранённых вложений">
+            <i class="fas fa-folder-open"></i>
+        </button>
         <div style="flex:1"></div>
         <button class="app-tab-icon" id="settingsBtn" onclick="openSettings()" title="Настройки">
             <i class="fas fa-cog"></i>
@@ -213,6 +216,28 @@
             <button class="ev-btn" onclick="clearSelection()" title="Снять выбор">
                 <i class="fas fa-times"></i>
             </button>
+        </div>
+        <!-- Панель фильтра и сортировки -->
+        <div class="filter-sort-bar" id="filterSortBar">
+            <button class="filter-chip active" id="fc-all" onclick="applyFilter('all')">Все</button>
+            <button class="filter-chip" id="fc-unread" onclick="applyFilter('unread')">Непрочитанные</button>
+            <button class="filter-chip" id="fc-attachments" onclick="applyFilter('attachments')">С вложениями</button>
+            <button class="filter-chip mark-all-read-btn" id="markAllReadBtn" onclick="markAllRead()" style="display:none;" title="Отметить все как прочитанные">
+                <i class="fas fa-envelope-open"></i> Прочитать все
+            </button>
+            <div class="sort-btn-wrap" id="sortBtnWrap">
+                <button class="sort-icon-btn" id="sortIconBtn" onclick="toggleSortMenu()" title="Сортировка">
+                    <i class="fas fa-sort-amount-down" id="sortIcon"></i>
+                </button>
+                <div class="sort-dropdown" id="sortDropdown">
+                    <div class="sort-option" data-sort="date_desc" onclick="applySort('date_desc')">Сначала новые</div>
+                    <div class="sort-option" data-sort="date_asc" onclick="applySort('date_asc')">Сначала старые</div>
+                    <div class="sort-option" data-sort="from_asc" onclick="applySort('from_asc')">Автор: А → Я</div>
+                    <div class="sort-option" data-sort="from_desc" onclick="applySort('from_desc')">Автор: Я → А</div>
+                    <div class="sort-option" data-sort="subject_asc" onclick="applySort('subject_asc')">Тема: А → Я</div>
+                    <div class="sort-option" data-sort="subject_desc" onclick="applySort('subject_desc')">Тема: Я → А</div>
+                </div>
+            </div>
         </div>
         <div class="email-list" id="emailList">
             <div class="empty-state"><i class="fas fa-inbox"></i><p>Выберите папку</p></div>
@@ -539,6 +564,31 @@
                         <input type="checkbox" id="settingsAutostart">
                         <span class="toggle-slider"></span>
                     </label>
+                </div>
+                <div class="settings-row" style="margin-top:8px;">
+                    <span class="settings-label">Оставлять письма на сервере</span>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="settingsLeaveOnServer" checked>
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+                <div class="settings-hint" style="margin-top:4px;">Если выключено — после загрузки письма удаляются с IMAP-сервера.</div>
+                <div class="settings-row" style="margin-top:8px;">
+                    <span class="settings-label">Полная синхронизация <span class="settings-hint" style="display:inline">(все письма с сервера)</span></span>
+                    <div style="display:flex;gap:6px;">
+                        <button class="ev-btn" id="fullSyncBtn" onclick="startFullSync()">
+                            <i class="fas fa-cloud-download-alt"></i> Загрузить всё
+                        </button>
+                        <button class="ev-btn warning" id="fullSyncStopBtn" onclick="stopFullSync()" style="display:none;">
+                            <i class="fas fa-stop"></i> Стоп
+                        </button>
+                    </div>
+                </div>
+                <div id="fullSyncProgress" style="display:none; margin-top:6px;">
+                    <div class="settings-hint" id="fullSyncStatus">Подготовка...</div>
+                    <div style="background:var(--border);border-radius:4px;height:6px;margin-top:4px;overflow:hidden;">
+                        <div id="fullSyncBar" style="height:100%;width:0%;background:var(--accent);transition:width 0.3s;"></div>
+                    </div>
                 </div>
                 <div class="settings-row" style="margin-top:8px;">
                     <span class="settings-label">Сбросить кеш синхронизации</span>

@@ -16,6 +16,8 @@ let draftAutoSaveTimer = null; // таймер автосохранения че
 let renameFolderOldName = null; // имя папки, которую переименовываем
 let dbOffset = 0;      // сколько писем уже загружено из БД (пагинация по БД)
 const PAGE_SIZE = 50;  // размер страницы
+let currentFilter = 'all';        // 'all' | 'unread' | 'attachments'
+let currentSort   = 'date_desc';  // 'date_desc' | 'date_asc' | 'from_asc' | 'from_desc' | 'subject_asc' | 'subject_desc'
 let selectedIds = new Set(); // выбранные письма для массовых операций
 let _syncing = false;        // true пока идёт sync_folder
 let _syncNewCount = 0;       // сколько новых писем пришло в текущем сеансе синка
@@ -68,10 +70,14 @@ async function syncAllAccountsBackground() {
     const notifEnabled = localStorage.getItem('mail-notifications') !== 'false';
     const notifDuration = parseInt(localStorage.getItem('mail-notif-duration') || '5');
     const saveBase = localStorage.getItem('mail-attach-path') || '';
+    const leaveOnServer = localStorage.getItem('mail-leave-on-server') !== 'false';
+    sbStatus('syncing', 'Автопроверка...');
+    let totalNew = 0;
     for (const a of accounts) {
         try {
-            const newItems = await invoke('sync_folder', { accountId: a.id, folder: 'INBOX', offset: 0 });
+            const newItems = await invoke('sync_folder', { accountId: a.id, folder: 'INBOX', offset: 0, leaveOnServer });
             if (newItems && newItems.length > 0) {
+                totalNew += newItems.length;
                 if (saveBase) invoke('auto_save_attachments', { emailIds: newItems.map(n => n.id), saveBase }).catch(() => {});
                 if (notifEnabled) {
                     playMailSound();
@@ -94,6 +100,77 @@ async function syncAllAccountsBackground() {
         }
     }
     await refreshAllAccountBadges();
+    sbStatus('ok', 'Автопроверка завершена', totalNew);
+}
+
+let _fullSyncUnlisten = null;
+
+function stopFullSync() {
+    const stopBtn = document.getElementById('fullSyncStopBtn');
+    if (stopBtn) { stopBtn.disabled = true; stopBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>'; }
+    invoke('cancel_full_sync').catch(() => {});
+}
+
+async function startFullSync() {
+    if (!currentAccountId) return;
+    const btn = document.getElementById('fullSyncBtn');
+    const stopBtn = document.getElementById('fullSyncStopBtn');
+    const progress = document.getElementById('fullSyncProgress');
+    const status = document.getElementById('fullSyncStatus');
+    const bar = document.getElementById('fullSyncBar');
+
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Загрузка...';
+    stopBtn.style.display = '';
+    stopBtn.disabled = false;
+    stopBtn.innerHTML = '<i class="fas fa-stop"></i> Стоп';
+    progress.style.display = '';
+    bar.style.width = '0%';
+    status.textContent = 'Подключение...';
+
+    const leaveOnServer = localStorage.getItem('mail-leave-on-server') !== 'false';
+    const saveBase = localStorage.getItem('mail-attach-path') || '';
+
+    // Подписываемся на прогресс
+    if (_fullSyncUnlisten) { _fullSyncUnlisten(); _fullSyncUnlisten = null; }
+    _fullSyncUnlisten = await window.__TAURI__.event.listen('full-sync-progress', ({ payload: p }) => {
+        const pct = p.total > 0 ? Math.round(p.fetched / p.total * 100) : 0;
+        bar.style.width = pct + '%';
+        const label = p.cancelled ? 'Остановлено' : `Загружено ${p.fetched} из ${p.total}`;
+        status.textContent = `${label} (новых: ${p.inserted})`;
+        if (saveBase && p.new_ids && p.new_ids.length > 0) {
+            invoke('auto_save_attachments', { emailIds: p.new_ids, saveBase }).catch(() => {});
+        }
+    });
+
+    try {
+        const inserted = await invoke('full_sync_folder', {
+            accountId: currentAccountId,
+            folder: imapFolderName(),
+            leaveOnServer,
+        });
+        bar.style.width = '100%';
+        status.textContent = `Готово. Загружено новых писем: ${inserted}`;
+        await loadEmails();
+        await updateUnreadBadge();
+    } catch (e) {
+        status.textContent = 'Ошибка: ' + e;
+    } finally {
+        if (_fullSyncUnlisten) { _fullSyncUnlisten(); _fullSyncUnlisten = null; }
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fas fa-cloud-download-alt"></i> Загрузить всё';
+        stopBtn.style.display = 'none';
+    }
+}
+
+async function openAttachFolder() {
+    const saveBase = localStorage.getItem('mail-attach-path') || '';
+    if (!saveBase) {
+        // Путь не задан — открываем настройки
+        openSettings();
+        return;
+    }
+    invoke('open_folder', { path: saveBase }).catch(e => alert('Не удалось открыть папку: ' + e));
 }
 
 // ── Настройки ─────────────────────────────────────────────────────────────
@@ -126,8 +203,10 @@ async function openSettings() {
         localStorage.getItem('mail-signature') || '';
 
     // Таймер
-    const interval = localStorage.getItem('mail-autosync') || '0';
+    const interval = localStorage.getItem('mail-autosync') ?? '5';
     document.getElementById('settingsAutoSync').value = interval;
+    document.getElementById('settingsLeaveOnServer').checked =
+        localStorage.getItem('mail-leave-on-server') !== 'false';
 
     // Уведомления
     const notifEnabled = localStorage.getItem('mail-notifications') !== 'false';
@@ -309,6 +388,10 @@ function saveSettings() {
     localStorage.setItem('mail-autosync', interval);
     applyAutoSync(interval);
 
+    // Оставлять на сервере
+    localStorage.setItem('mail-leave-on-server',
+        document.getElementById('settingsLeaveOnServer').checked ? 'true' : 'false');
+
     // Уведомления
     const notifEnabled = document.getElementById('settingsNotifications').checked;
     localStorage.setItem('mail-notifications', notifEnabled ? 'true' : 'false');
@@ -358,13 +441,26 @@ window.addEventListener('message', function(e) {
 
 // ── Инициализация ──────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', async () => {
+    // Подсветить активный пункт сортировки по умолчанию
+    document.querySelectorAll('.sort-option').forEach(el => {
+        el.classList.toggle('active', el.dataset.sort === currentSort);
+    });
+
     // Восстанавливаем тему
     const savedTheme = localStorage.getItem('mail-theme') || 'light';
     applyTheme(savedTheme);
 
-    // Запускаем автопроверку если была настроена
-    const savedInterval = localStorage.getItem('mail-autosync') || '0';
+    // Запускаем автопроверку (дефолт — каждые 5 минут)
+    const savedInterval = localStorage.getItem('mail-autosync') ?? '5';
+    if (!localStorage.getItem('mail-autosync')) localStorage.setItem('mail-autosync', '5');
     applyAutoSync(savedInterval);
+
+    // Путь сохранения вложений — устанавливаем дефолт при первом запуске
+    if (!localStorage.getItem('mail-attach-path')) {
+        invoke('get_default_attach_path').then(def => {
+            if (def) localStorage.setItem('mail-attach-path', def);
+        }).catch(() => {});
+    }
 
     // Закрывать дропдауны по клику вне
     document.addEventListener('click', e => {
@@ -588,6 +684,8 @@ async function selectAccount(id) {
     updateUnreadBadge();
     loadCustomFolders();
     refreshCustomFolders();
+    // Автоматическая синхронизация новых писем при выборе аккаунта
+    syncCurrentFolder();
 }
 
 async function removeAccount(e, id) {
@@ -724,8 +822,7 @@ async function loadEmails() {
                 invoke('get_emails', { accountId: currentAccountId, folder: 'Sent',  limit: 2000, offset: 0 }),
             ]);
             allEmails = [...inbox, ...sent].filter(e => e.is_starred);
-            // date_ts уже integer — сортировка без Date.parse
-            allEmails.sort((a, b) => b.date_ts - a.date_ts);
+            _applyFilterAndSortInJs(allEmails);
             dbOffset = allEmails.length;
         } else {
             // Быстрая первая страница: только PAGE_SIZE писем
@@ -734,6 +831,8 @@ async function loadEmails() {
                 folder: currentFolder,
                 limit: PAGE_SIZE,
                 offset: 0,
+                filter: currentFilter,
+                sort: currentSort,
             });
             allEmails = page;
             dbOffset = page.length;
@@ -999,6 +1098,21 @@ async function moveSelectedToFolder(targetFolder) {
             emailIds: ids,
             targetFolder,
         });
+        // При перемещении в Спам — добавляем отправителей в чёрный список
+        if (targetFolder === 'Spam') {
+            const senders = [...new Set(
+                allEmails.filter(e => selectedIds.has(e.id)).map(e => e.from_addr).filter(Boolean)
+            )];
+            await Promise.all(senders.map(addr => invoke('blacklist_sender', { fromAddr: addr }).catch(() => {})));
+            // Обновить список контактов если он уже загружен
+            if (contacts.length > 0) {
+                contacts = await invoke('get_contacts');
+                if (currentContactId) {
+                    const c = contacts.find(x => x.id === currentContactId);
+                    if (c) renderContactDetail(c);
+                }
+            }
+        }
         allEmails = allEmails.filter(e => !selectedIds.has(e.id));
         selectedIds.clear();
         updateSelectToolbar();
@@ -1014,6 +1128,11 @@ async function moveSelectedToFolder(targetFolder) {
 document.addEventListener('click', function(e) {
     const wrap = document.getElementById('moveFolderWrap');
     if (wrap && !wrap.contains(e.target)) closeMovePopup();
+    const sortWrap = document.getElementById('sortBtnWrap');
+    if (sortWrap && !sortWrap.contains(e.target)) {
+        document.getElementById('sortDropdown').classList.remove('open');
+        document.getElementById('sortIconBtn').classList.remove('active');
+    }
 });
 
 const FOLDER_LABELS = { INBOX: 'Входящие', Sent: 'Отправленные', Trash: 'Корзина', Spam: 'Спам', Drafts: 'Черновики', Starred: 'Избранное' };
@@ -1125,7 +1244,8 @@ async function syncCurrentFolder() {
     try {
         // Rust возвращает [] при первичной загрузке; при инкременте — массив NotifItem.
         // Пока идёт ожидание — события email-received уже добавляют письма по одному.
-        const newItems = await invoke('sync_folder', { accountId: currentAccountId, folder: imapFolderName(), offset: 0 });
+        const leaveOnServer = localStorage.getItem('mail-leave-on-server') !== 'false';
+        const newItems = await invoke('sync_folder', { accountId: currentAccountId, folder: imapFolderName(), offset: 0, leaveOnServer });
         _syncing = false;
         // Перерисовываем список финально (правильный порядок, актуальные данные)
         await loadEmails();
@@ -1168,6 +1288,8 @@ async function loadMoreEmails() {
                 folder: currentFolder,
                 limit: PAGE_SIZE,
                 offset: dbOffset,
+                filter: currentFilter,
+                sort: currentSort,
             });
             if (morePage.length > 0) {
                 // Добавляем к списку без полного перерендера
@@ -1185,13 +1307,28 @@ async function loadMoreEmails() {
             return;
         }
         // Остальные папки — идём на IMAP за более старыми письмами
+        const leaveOnServer = localStorage.getItem('mail-leave-on-server') !== 'false';
         const newItems = await invoke('sync_folder', {
             accountId: currentAccountId,
             folder: imapFolderName(),
             offset: syncedCount,
+            leaveOnServer,
         });
         syncedCount += newItems.length;
-        await loadEmails();
+        // Не сбрасываем список на начало — добавляем следующую страницу из БД
+        const morePage2 = await invoke('get_emails', {
+            accountId: currentAccountId,
+            folder: currentFolder,
+            limit: PAGE_SIZE,
+            offset: dbOffset,
+            filter: currentFilter,
+            sort: currentSort,
+        });
+        if (morePage2.length > 0) {
+            allEmails = [...allEmails, ...morePage2];
+            dbOffset += morePage2.length;
+            appendEmailsToList(morePage2);
+        }
         await updateUnreadBadge();
         if (newItems.length > 0) {
             const saveBase = localStorage.getItem('mail-attach-path') || '';
@@ -1202,6 +1339,66 @@ async function loadMoreEmails() {
     } finally {
         if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-chevron-down"></i> Загрузить ещё'; }
     }
+}
+
+// Применяет фильтр и сортировку к массиву писем (для папки Starred, где всё в JS)
+function _applyFilterAndSortInJs(arr) {
+    // Фильтр
+    const filtered = arr.filter(e => {
+        if (currentFilter === 'unread')      return !e.is_read;
+        if (currentFilter === 'attachments') return e.has_attachment;
+        return true;
+    });
+    // Сортировка
+    filtered.sort((a, b) => {
+        const s = currentSort;
+        if (s === 'date_asc')     return a.date_ts - b.date_ts;
+        if (s === 'from_asc')     return (a.from_addr || '').localeCompare(b.from_addr || '', 'ru');
+        if (s === 'from_desc')    return (b.from_addr || '').localeCompare(a.from_addr || '', 'ru');
+        if (s === 'subject_asc')  return (a.subject || '').localeCompare(b.subject || '', 'ru');
+        if (s === 'subject_desc') return (b.subject || '').localeCompare(a.subject || '', 'ru');
+        return b.date_ts - a.date_ts; // date_desc
+    });
+    arr.splice(0, arr.length, ...filtered);
+}
+
+function applyFilter(f) {
+    currentFilter = f;
+    // Подсветить активный чип
+    ['all', 'unread', 'attachments'].forEach(k => {
+        const el = document.getElementById('fc-' + k);
+        if (el) el.classList.toggle('active', k === f);
+    });
+    // Показать кнопку "Прочитать все" только при фильтре "Непрочитанные"
+    const markBtn = document.getElementById('markAllReadBtn');
+    if (markBtn) markBtn.style.display = f === 'unread' ? '' : 'none';
+    loadEmails();
+}
+
+async function markAllRead() {
+    if (!currentAccountId) return;
+    await invoke('mark_all_read', { accountId: currentAccountId, folder: currentFolder });
+    await loadEmails();
+    await updateUnreadBadge();
+}
+
+function toggleSortMenu() {
+    const dd = document.getElementById('sortDropdown');
+    const btn = document.getElementById('sortIconBtn');
+    const open = dd.classList.toggle('open');
+    btn.classList.toggle('active', open);
+}
+
+function applySort(s) {
+    currentSort = s;
+    // Подсветить активный пункт
+    document.querySelectorAll('.sort-option').forEach(el => {
+        el.classList.toggle('active', el.dataset.sort === s);
+    });
+    // Закрыть меню
+    document.getElementById('sortDropdown').classList.remove('open');
+    document.getElementById('sortIconBtn').classList.remove('active');
+    loadEmails();
 }
 
 async function updateUnreadBadge() {
@@ -2376,6 +2573,7 @@ async function loadContacts() {
 function renderGroupChips() {
     let bar = document.getElementById('groupChipsBar');
     if (!bar) return;
+    const blacklistCount = contacts.filter(c => c.is_blacklisted).length;
     bar.innerHTML = `
         <div class="group-chip ${currentGroupId === null ? 'active' : ''}" onclick="selectGroup(null)">
             Все <span style="opacity:0.6;font-size:11px">${contacts.length}</span>
@@ -2387,6 +2585,10 @@ function renderGroupChips() {
                       onclick="event.stopPropagation(); deleteGroupConfirm(${g.id}, '${escHtml(g.name).replace(/'/g,"\\'")}')">✕</span>
             </div>
         `).join('')}
+        <div class="group-chip blacklist-chip ${currentGroupId === 'blacklist' ? 'active' : ''}" onclick="selectGroup('blacklist')" title="Чёрный список">
+            <i class="fas fa-ban" style="font-size:10px"></i> Чёрный список
+            ${blacklistCount > 0 ? `<span style="opacity:0.7;font-size:11px">${blacklistCount}</span>` : ''}
+        </div>
         <button class="group-add-btn" id="groupAddBtn" onclick="showGroupInput()">+ Группа</button>
     `;
 }
@@ -2446,6 +2648,8 @@ async function selectGroup(groupId) {
     document.getElementById('contactSearch').value = '';
     if (groupId === null) {
         renderContactList(contacts, '');
+    } else if (groupId === 'blacklist') {
+        renderContactList(contacts.filter(c => c.is_blacklisted), '');
     } else {
         try {
             const list = await invoke('get_contacts_by_group', { groupId });
@@ -2467,9 +2671,11 @@ async function deleteGroupConfirm(groupId, name) {
 function filterContacts(term) {
     const q = term.trim().toLowerCase();
     // Если активна группа — поиск идёт по её контактам, иначе по всем
-    const base = currentGroupId !== null
-        ? contacts.filter(c => c._groupIds && c._groupIds.includes(currentGroupId))
-        : contacts;
+    const base = currentGroupId === 'blacklist'
+        ? contacts.filter(c => c.is_blacklisted)
+        : currentGroupId !== null
+            ? contacts.filter(c => c._groupIds && c._groupIds.includes(currentGroupId))
+            : contacts;
     const filtered = q ? base.filter(c =>
         c.name.toLowerCase().includes(q) ||
         c.email.toLowerCase().includes(q) ||
@@ -2510,7 +2716,10 @@ function renderContactList(list, _filter) {
                            onclick="toggleContactCheck(${c.id}, event)" title="Выбрать">
                 </div>
                 <div class="contact-list-info">
-                    <div class="contact-list-name">${escHtml(c.name || c.email)}</div>
+                    <div class="contact-list-name">
+                        ${escHtml(c.name || c.email)}
+                        ${c.is_blacklisted ? '<i class="fas fa-ban cli-blacklist-icon" title="В чёрном списке"></i>' : ''}
+                    </div>
                     <div class="contact-list-email">${escHtml(c.email)}</div>
                 </div>
             </div>
@@ -2644,6 +2853,9 @@ async function renderContactDetail(c) {
                 </button>
                 <button class="ev-btn" onclick="startEditContact(${c.id})">
                     <i class="fas fa-edit"></i> Изменить
+                </button>
+                <button class="ev-btn ${c.is_blacklisted ? 'blacklist-active' : ''}" onclick="toggleBlacklist(${c.id})" title="${c.is_blacklisted ? 'Убрать из чёрного списка' : 'В чёрный список'}">
+                    <i class="fas fa-ban"></i>
                 </button>
                 <button class="ev-btn danger" onclick="deleteContactConfirm(${c.id})">
                     <i class="fas fa-trash"></i>
@@ -2797,6 +3009,30 @@ async function saveContactForm(existingId) {
     } catch (e) {
         const err = document.getElementById('ceError');
         if (err) { err.textContent = 'Ошибка: ' + e; err.style.display = 'block'; }
+    }
+}
+
+async function toggleBlacklist(id) {
+    try {
+        const isBlacklisted = await invoke('toggle_contact_blacklist', { id });
+        const c = contacts.find(x => x.id === id);
+        if (c) {
+            c.is_blacklisted = isBlacklisted;
+            // Обновить иконку в списке
+            const nameEl = document.querySelector(`#cli-${id} .contact-list-name`);
+            if (nameEl) {
+                const icon = nameEl.querySelector('.cli-blacklist-icon');
+                if (isBlacklisted && !icon) {
+                    nameEl.insertAdjacentHTML('beforeend', '<i class="fas fa-ban cli-blacklist-icon" title="В чёрном списке"></i>');
+                } else if (!isBlacklisted && icon) {
+                    icon.remove();
+                }
+            }
+            // Перерисовать карточку
+            renderContactDetail(c);
+        }
+    } catch (e) {
+        alert('Ошибка: ' + e);
     }
 }
 

@@ -11,7 +11,7 @@ use native_tls::TlsConnector;
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicBool, Ordering};
 use tauri::{State, Manager, SystemTray, SystemTrayMenu, SystemTrayEvent, CustomMenuItem};
 use chrono::Datelike;
 #[cfg(target_os = "windows")]
@@ -19,6 +19,7 @@ use std::os::windows::process::CommandExt;
 
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 static ACTIVE_NOTIFS: AtomicU32 = AtomicU32::new(0);
+static FULL_SYNC_CANCEL: AtomicBool = AtomicBool::new(false);
 
 // ─── Типы ────────────────────────────────────────────────────────────────────
 
@@ -221,6 +222,9 @@ fn init_db(conn: &Connection) {
             UNIQUE(account_id, name)
         );
     ").ok();
+
+    // Чёрный список контактов
+    conn.execute_batch("ALTER TABLE contacts ADD COLUMN is_blacklisted INTEGER NOT NULL DEFAULT 0;").ok();
 
     // Группа по умолчанию
     conn.execute(
@@ -558,7 +562,7 @@ fn snippet_from_text(text: &str, max: usize) -> String {
 // ─── IMAP: получение писем ───────────────────────────────────────────────────
 
 /// Возвращает (письма, uid_next) — uid_next нужен для корректной инициализации last_uid
-fn fetch_from_imap(account: &Account, folder: &str, limit: u32, offset: u32) -> Result<(Vec<(u32, Vec<u8>)>, u32), String> {
+fn fetch_from_imap(account: &Account, folder: &str, limit: u32, offset: u32, leave_on_server: bool) -> Result<(Vec<(u32, Vec<u8>)>, u32), String> {
     use std::net::TcpStream;
 
     log_to_file(&format!("fetch_from_imap: folder={} offset={}", folder, offset));
@@ -592,18 +596,21 @@ fn fetch_from_imap(account: &Account, folder: &str, limit: u32, offset: u32) -> 
     }
 
     // offset > 0 означает "загрузить ещё" (пагинация по seq, старые письма)
+    // "UID RFC822" — просим сервер вернуть реальный UID вместе с телом письма,
+    // иначе msg.uid = None и мы используем seq-номер как UID, что ломает
+    // инкрементальный sync на серверах где UID >> seq (mail.ru).
     let messages = if offset > 0 {
         if count <= offset { let _ = session.logout(); return Ok((vec![], uid_next)); }
         let end = count - offset;
         let start = if end > limit { end - limit + 1 } else { 1 };
         log_to_file(&format!("fetch_from_imap: load-more seq {}:{}", start, end));
-        session.fetch(format!("{}:{}", start, end), "RFC822")
+        session.fetch(format!("{}:{}", start, end), "(UID RFC822)")
             .map_err(|e| { let s = format!("IMAP fetch error: {}", e); log_to_file(&s); s })?
     } else {
         let end = count;
         let start = if end > limit { end - limit + 1 } else { 1 };
         log_to_file(&format!("fetch_from_imap: initial seq {}:{}", start, end));
-        session.fetch(format!("{}:{}", start, end), "RFC822")
+        session.fetch(format!("{}:{}", start, end), "(UID RFC822)")
             .map_err(|e| { let s = format!("IMAP fetch error: {}", e); log_to_file(&s); s })?
     };
 
@@ -615,12 +622,19 @@ fn fetch_from_imap(account: &Account, folder: &str, limit: u32, offset: u32) -> 
     }
 
     log_to_file(&format!("fetch_from_imap: fetched {} messages", result.len()));
+    if !leave_on_server && !result.is_empty() {
+        let uid_set: String = result.iter().map(|(u, _)| u.to_string()).collect::<Vec<_>>().join(",");
+        if session.uid_store(&uid_set, "+FLAGS (\\Deleted)").is_ok() {
+            session.expunge().ok();
+            log_to_file(&format!("fetch_from_imap: deleted {} UIDs from server", result.len()));
+        }
+    }
     let _ = session.logout();
     Ok((result, uid_next))
 }
 
 /// Инкрементальный IMAP-fetch: только письма с UID > last_uid
-fn fetch_new_from_imap(account: &Account, folder: &str, last_uid: u32) -> Result<Vec<(u32, Vec<u8>)>, String> {
+fn fetch_new_from_imap(account: &Account, folder: &str, last_uid: u32, leave_on_server: bool) -> Result<Vec<(u32, Vec<u8>)>, String> {
     use std::net::TcpStream;
 
     log_to_file(&format!("fetch_new_from_imap: folder={} last_uid={}", folder, last_uid));
@@ -656,30 +670,54 @@ fn fetch_new_from_imap(account: &Account, folder: &str, last_uid: u32) -> Result
         .map_err(|e| { let s = format!("IMAP uid_search error: {}", e); log_to_file(&s); s })?;
 
     // Фильтруем: убираем last_uid (сервер может вернуть его при запросе last_uid+1:*)
-    let new_uids: Vec<u32> = found_uids.into_iter().filter(|&u| u > last_uid).collect();
+    let mut new_uids: Vec<u32> = found_uids.into_iter().filter(|&u| u > last_uid).collect();
+    new_uids.sort_unstable(); // от старых к новым
 
-    log_to_file(&format!("fetch_new_from_imap: found {} new UIDs", new_uids.len()));
+    let total_new = new_uids.len();
+    log_to_file(&format!("fetch_new_from_imap: found {} new UIDs", total_new));
 
     if new_uids.is_empty() {
         let _ = session.logout();
         return Ok(vec![]);
     }
 
-    // Теперь фетчим только найденные письма
-    let uid_list = new_uids.iter().map(|u| u.to_string()).collect::<Vec<_>>().join(",");
-    let messages = session.uid_fetch(&uid_list, "RFC822")
-        .map_err(|e| { let s = format!("IMAP uid_fetch error: {}", e); log_to_file(&s); s })?;
+    // Ограничиваем батч: берём первые (самые старые) MAX_BATCH писем.
+    // При большом кол-ве новых (напр. mail.ru после долгого перерыва) это
+    // не позволяет отправить один огромный uid_fetch и получить os error 10054.
+    // Следующий sync подберёт следующую порцию и т.д.
+    const MAX_BATCH: usize = 100;
+    new_uids.truncate(MAX_BATCH);
+    if total_new > MAX_BATCH {
+        log_to_file(&format!(
+            "fetch_new_from_imap: capped to {} (total new: {}), next sync will fetch more",
+            MAX_BATCH, total_new
+        ));
+    }
 
+    // uid_fetch чанками по 50 — mail.ru обрывает соединение на больших запросах
+    const FETCH_CHUNK: usize = 50;
     let mut result: Vec<(u32, Vec<u8>)> = Vec::new();
-    for msg in messages.iter() {
-        if let Some(uid) = msg.uid {
-            if let Some(body) = msg.body() {
-                result.push((uid, body.to_vec()));
+    for chunk in new_uids.chunks(FETCH_CHUNK) {
+        let uid_list = chunk.iter().map(|u| u.to_string()).collect::<Vec<_>>().join(",");
+        let messages = session.uid_fetch(&uid_list, "RFC822")
+            .map_err(|e| { let s = format!("IMAP uid_fetch error: {}", e); log_to_file(&s); s })?;
+        for msg in messages.iter() {
+            if let Some(uid) = msg.uid {
+                if let Some(body) = msg.body() {
+                    result.push((uid, body.to_vec()));
+                }
             }
         }
     }
 
     log_to_file(&format!("fetch_new_from_imap: fetched {} messages", result.len()));
+    if !leave_on_server && !result.is_empty() {
+        let uid_set: String = result.iter().map(|(u, _)| u.to_string()).collect::<Vec<_>>().join(",");
+        if session.uid_store(&uid_set, "+FLAGS (\\Deleted)").is_ok() {
+            session.expunge().ok();
+            log_to_file(&format!("fetch_new_from_imap: deleted {} UIDs from server", result.len()));
+        }
+    }
     let _ = session.logout();
     Ok(result)
 }
@@ -1252,6 +1290,18 @@ fn parse_and_store(
     // Парсим дату в Unix timestamp для быстрой сортировки
     let date_ts: i64 = mailparse::dateparse(&date).unwrap_or(0);
 
+    // Если письмо уже существует в любой папке (включая Spam после блокировки) — пропускаем.
+    // Это предотвращает бесконечный цикл: письмо заблокировано → переехало в Spam →
+    // следующий sync снова вставляет его с folder='INBOX' → UNIQUE(uid,folder) не срабатывает.
+    let already_exists: bool = conn.query_row(
+        "SELECT 1 FROM emails WHERE account_id=?1 AND uid=?2 LIMIT 1",
+        params![account_id, uid as i64],
+        |_| Ok(()),
+    ).is_ok();
+    if already_exists {
+        return Ok(None);
+    }
+
     let changed = conn.execute(
         "INSERT OR IGNORE INTO emails
          (account_id, uid, folder, from_addr, to_addr, cc_addr, subject, date,
@@ -1463,14 +1513,33 @@ struct NotifItem {
 }
 
 #[tauri::command]
+/// Перемещает в Спам все письма аккаунта, чей from_addr совпадает с заблокированным контактом.
+/// Вызывается после сохранения новых писем в sync_folder.
+fn filter_blacklisted_to_spam(conn: &Connection, account_id: i64) {
+    conn.execute(
+        "UPDATE emails SET folder='Spam'
+         WHERE account_id=?1 AND folder!='Spam'
+           AND EXISTS (
+               SELECT 1 FROM contacts
+               WHERE is_blacklisted=1
+                 AND INSTR(LOWER(emails.from_addr), LOWER(contacts.email)) > 0
+                 AND LENGTH(contacts.email) > 0
+           )",
+        params![account_id],
+    ).ok();
+}
+
+#[tauri::command]
 async fn sync_folder(
     app_handle: tauri::AppHandle,
     state: State<'_, AppState>,
     account_id: i64,
     folder: String,
     offset: Option<u32>,
+    leave_on_server: Option<bool>,
 ) -> Result<Vec<NotifItem>, String> {
     let offset = offset.unwrap_or(0);
+    let leave_on_server = leave_on_server.unwrap_or(true);
     let account: Account = {
         let conn = state.db.lock().unwrap();
         get_account_by_id(&conn, account_id)?
@@ -1491,11 +1560,11 @@ async fn sync_folder(
     let fetch_result = tauri::async_runtime::spawn_blocking(move || {
         if offset == 0 && last_uid > 0 {
             // Инкрементальный режим: только новые по UID
-            fetch_new_from_imap(&account, &folder_clone, last_uid)
+            fetch_new_from_imap(&account, &folder_clone, last_uid, leave_on_server)
                 .map(|msgs| (msgs, 0u32))
         } else {
             // Первичная загрузка или "загрузить ещё"
-            fetch_from_imap(&account, &folder_clone, 100, offset)
+            fetch_from_imap(&account, &folder_clone, 100, offset, leave_on_server)
         }
     }).await.map_err(|e| e.to_string())?;
 
@@ -1576,6 +1645,11 @@ async fn sync_folder(
             ).ok();
             log_to_file(&format!("sync_folder: updated last_uid to {}", effective_last_uid));
         }
+
+        // Письма от заблокированных контактов → Спам
+        if !messages.is_empty() {
+            filter_blacklisted_to_spam(&conn, account_id);
+        }
     }
 
     // При первичной загрузке (last_uid был 0) не возвращаем элементы —
@@ -1586,6 +1660,130 @@ async fn sync_folder(
     } else {
         Ok(all_new_items)
     }
+}
+
+/// Полная синхронизация: забирает ВСЕ письма с сервера, 100 за раз,
+/// пока не дойдёт до самого старого. Эмитит событие full-sync-progress.
+#[tauri::command]
+async fn full_sync_folder(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    account_id: i64,
+    folder: String,
+    leave_on_server: bool,
+) -> Result<u32, String> {
+    use std::net::TcpStream;
+
+    let account: Account = {
+        let conn = state.db.lock().unwrap();
+        get_account_by_id(&conn, account_id)?
+    };
+
+    log_to_file(&format!("full_sync_folder: account={} folder={} leave={}", account.email, folder, leave_on_server));
+
+    // Одно IMAP-соединение на весь процесс
+    let timeout = std::time::Duration::from_secs(60);
+    let tcp = TcpStream::connect((account.imap_host.as_str(), account.imap_port))
+        .map_err(|e| format!("TCP connect: {}", e))?;
+    tcp.set_read_timeout(Some(timeout)).ok();
+    tcp.set_write_timeout(Some(timeout)).ok();
+    let tls = native_tls::TlsConnector::builder().build()
+        .map_err(|e| format!("TLS build: {}", e))?;
+    let tls_stream = tls.connect(&account.imap_host, tcp)
+        .map_err(|e| format!("TLS connect: {}", e))?;
+    let client = imap::Client::new(tls_stream);
+    let mut session = client.login(&account.email, &account.password)
+        .map_err(|(e, _)| format!("IMAP login: {}", e))?;
+
+    let mailbox = session.select(&folder)
+        .map_err(|e| format!("IMAP select: {}", e))?;
+    let total_msgs = mailbox.exists;
+
+    if total_msgs == 0 {
+        let _ = session.logout();
+        return Ok(0);
+    }
+
+    log_to_file(&format!("full_sync_folder: total={} messages on server", total_msgs));
+
+    FULL_SYNC_CANCEL.store(false, Ordering::Relaxed);
+    let batch_size: u32 = 100;
+    let mut offset: u32 = 0;
+    let mut total_inserted: u32 = 0;
+
+    loop {
+        if total_msgs <= offset { break; }
+        if FULL_SYNC_CANCEL.load(Ordering::Relaxed) {
+            log_to_file("full_sync_folder: cancelled by user");
+            break;
+        }
+
+        let end = total_msgs - offset;
+        let start = if end > batch_size { end - batch_size + 1 } else { 1 };
+        log_to_file(&format!("full_sync_folder: seq {}:{} (offset={})", start, end, offset));
+
+        let messages = match session.fetch(format!("{}:{}", start, end), "(UID RFC822)") {
+            Ok(m) => m,
+            Err(e) => {
+                log_to_file(&format!("full_sync_folder: fetch error: {}", e));
+                break;
+            }
+        };
+
+        let mut batch: Vec<(u32, Vec<u8>)> = Vec::new();
+        for msg in messages.iter() {
+            if let Some(body) = msg.body() {
+                batch.push((msg.uid.unwrap_or(msg.message), body.to_vec()));
+            }
+        }
+
+        if batch.is_empty() { break; }
+
+        let (batch_inserted, new_ids) = {
+            let conn = state.db.lock().unwrap();
+            let mut count: u32 = 0;
+            let mut ids: Vec<i64> = Vec::new();
+            for (uid, raw) in &batch {
+                match parse_and_store(&conn, account_id, &folder, *uid, raw) {
+                    Ok(Some(eid)) => { count += 1; ids.push(eid); }
+                    _ => {}
+                }
+            }
+            (count, ids)
+        };
+
+        if !leave_on_server {
+            let uid_set: String = batch.iter().map(|(u, _)| u.to_string()).collect::<Vec<_>>().join(",");
+            if session.uid_store(&uid_set, "+FLAGS (\\Deleted)").is_ok() {
+                session.expunge().ok();
+            }
+        }
+
+        total_inserted += batch_inserted;
+        offset += batch_size;
+
+        let fetched_so_far = offset.min(total_msgs);
+        let cancelled = FULL_SYNC_CANCEL.load(Ordering::Relaxed);
+        let _ = app_handle.emit_all("full-sync-progress", serde_json::json!({
+            "fetched":   fetched_so_far,
+            "total":     total_msgs,
+            "inserted":  total_inserted,
+            "new_ids":   new_ids,
+            "cancelled": cancelled,
+        }));
+
+        if cancelled { break; }
+    }
+
+    let _ = session.logout();
+    log_to_file(&format!("full_sync_folder: done inserted={}/{}", total_inserted, total_msgs));
+    Ok(total_inserted)
+}
+
+#[tauri::command]
+fn cancel_full_sync() {
+    FULL_SYNC_CANCEL.store(true, Ordering::Relaxed);
+    log_to_file("cancel_full_sync: requested");
 }
 
 #[tauri::command]
@@ -1651,20 +1849,38 @@ fn get_emails(
     folder: String,
     limit: Option<i64>,
     offset: Option<i64>,
+    filter: Option<String>,
+    sort: Option<String>,
 ) -> Result<Vec<EmailItem>, String> {
     let limit = limit.unwrap_or(50).min(500);
     let offset = offset.unwrap_or(0).max(0);
-    let conn = state.db.lock().unwrap();
-    // snippet уже в БД — не читаем body_text (экономим на чтении больших полей)
-    // date_ts — Integer, сортировка быстрая без парсинга строки
-    let mut stmt = conn.prepare(
+
+    let filter_clause = match filter.as_deref().unwrap_or("all") {
+        "unread"      => " AND is_read = 0",
+        "attachments" => " AND has_attachment = 1",
+        _             => "",
+    };
+    let order_clause = match sort.as_deref().unwrap_or("date_desc") {
+        "date_asc"     => "date_ts ASC, id ASC",
+        "from_asc"     => "u_lower(from_addr) ASC, date_ts DESC",
+        "from_desc"    => "u_lower(from_addr) DESC, date_ts DESC",
+        "subject_asc"  => "u_lower(subject) ASC, date_ts DESC",
+        "subject_desc" => "u_lower(subject) DESC, date_ts DESC",
+        _              => "date_ts DESC, id DESC",
+    };
+    let sql = format!(
         "SELECT id, uid, folder, from_addr, to_addr, subject, date, date_ts,
                 is_read, is_starred, has_attachment, snippet
          FROM emails
-         WHERE account_id=?1 AND folder=?2
-         ORDER BY date_ts DESC, id DESC
-         LIMIT ?3 OFFSET ?4"
-    ).map_err(|e| e.to_string())?;
+         WHERE account_id=?1 AND folder=?2{}
+         ORDER BY {}
+         LIMIT ?3 OFFSET ?4",
+        filter_clause, order_clause
+    );
+
+    let conn = state.db.lock().unwrap();
+    // snippet уже в БД — не читаем body_text (экономим на чтении больших полей)
+    let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
 
     let list: Vec<EmailItem> = stmt.query_map(params![account_id, folder, limit, offset], |r| {
         // Для старых записей без snippet — берём заглушку; snippet_from_text не вызываем
@@ -1868,6 +2084,19 @@ fn open_data_dir() -> Result<(), String> {
     let path = get_data_dir();
     std::process::Command::new("explorer")
         .arg(path.to_string_lossy().as_ref())
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+fn open_folder(path: String) -> Result<(), String> {
+    let p = std::path::Path::new(&path);
+    if !p.exists() {
+        std::fs::create_dir_all(p).map_err(|e| e.to_string())?;
+    }
+    std::process::Command::new("explorer")
+        .arg(&path)
         .spawn()
         .map_err(|e| e.to_string())?;
     Ok(())
@@ -2410,16 +2639,27 @@ fn mark_read_bulk(state: State<AppState>, email_ids: Vec<i64>, is_read: bool) ->
     Ok(())
 }
 
+#[tauri::command]
+fn mark_all_read(state: State<AppState>, account_id: i64, folder: String) -> Result<u32, String> {
+    let conn = state.db.lock().unwrap();
+    let count = conn.execute(
+        "UPDATE emails SET is_read=1 WHERE account_id=?1 AND folder=?2 AND is_read=0",
+        params![account_id, folder],
+    ).map_err(|e| e.to_string())? as u32;
+    Ok(count)
+}
+
 // ─── Контакты ─────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 struct Contact {
-    id:      i64,
-    name:    String,
-    email:   String,
-    phone:   String,
-    company: String,
-    notes:   String,
+    id:             i64,
+    name:           String,
+    email:          String,
+    phone:          String,
+    company:        String,
+    notes:          String,
+    is_blacklisted: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -2553,15 +2793,16 @@ fn insert_contacts(conn: &Connection, list: &[(String,String,String,String,Strin
 fn get_contacts(state: State<AppState>) -> Result<Vec<Contact>, String> {
     let conn = state.db.lock().unwrap();
     let mut stmt = conn.prepare(
-        "SELECT id,name,email,phone,company,notes FROM contacts ORDER BY name COLLATE NOCASE ASC"
+        "SELECT id,name,email,phone,company,notes,is_blacklisted FROM contacts ORDER BY name COLLATE NOCASE ASC"
     ).map_err(|e| e.to_string())?;
     let list: Vec<Contact> = stmt.query_map([], |r| Ok(Contact {
-        id:      r.get(0)?,
-        name:    r.get(1)?,
-        email:   r.get(2)?,
-        phone:   r.get(3)?,
-        company: r.get(4)?,
-        notes:   r.get(5)?,
+        id:             r.get(0)?,
+        name:           r.get(1)?,
+        email:          r.get(2)?,
+        phone:          r.get(3)?,
+        company:        r.get(4)?,
+        notes:          r.get(5)?,
+        is_blacklisted: r.get::<_, i32>(6)? != 0,
     })).map_err(|e| e.to_string())?
     .filter_map(|r| r.ok()).collect();
     Ok(list)
@@ -2584,7 +2825,7 @@ fn save_contact(state: State<AppState>, contact: Contact) -> Result<Contact, Str
         conn.last_insert_rowid()
     };
     add_to_default_group(&conn, id);
-    Ok(Contact { id, name: contact.name, email: contact.email, phone: contact.phone, company: contact.company, notes: contact.notes })
+    Ok(Contact { id, name: contact.name, email: contact.email, phone: contact.phone, company: contact.company, notes: contact.notes, is_blacklisted: contact.is_blacklisted })
 }
 
 #[tauri::command]
@@ -2638,7 +2879,7 @@ fn add_contact_from_email(state: State<AppState>, email_id: i64) -> Result<Conta
     ).map_err(|e| e.to_string())?;
 
     add_to_default_group(&conn, id);
-    Ok(Contact { id, name, email, phone: String::new(), company: String::new(), notes: String::new() })
+    Ok(Contact { id, name, email, phone: String::new(), company: String::new(), notes: String::new(), is_blacklisted: false })
 }
 
 #[tauri::command]
@@ -2730,7 +2971,7 @@ fn add_contacts_to_group(state: State<AppState>, contact_ids: Vec<i64>, group_id
 fn get_contacts_by_group(state: State<AppState>, group_id: i64) -> Result<Vec<Contact>, String> {
     let conn = state.db.lock().unwrap();
     let mut stmt = conn.prepare(
-        "SELECT c.id, c.name, c.email, c.phone, c.company, c.notes
+        "SELECT c.id, c.name, c.email, c.phone, c.company, c.notes, c.is_blacklisted
          FROM contacts c
          JOIN contact_group_members m ON c.id = m.contact_id
          WHERE m.group_id = ?1
@@ -2739,9 +2980,58 @@ fn get_contacts_by_group(state: State<AppState>, group_id: i64) -> Result<Vec<Co
     let list = stmt.query_map(params![group_id], |r| Ok(Contact {
         id: r.get(0)?, name: r.get(1)?, email: r.get(2)?,
         phone: r.get(3)?, company: r.get(4)?, notes: r.get(5)?,
+        is_blacklisted: r.get::<_, i32>(6)? != 0,
     })).map_err(|e| e.to_string())?
         .filter_map(|r| r.ok()).collect();
     Ok(list)
+}
+
+/// Добавляет адрес в контакты (если нет) и ставит is_blacklisted=1
+#[tauri::command]
+fn blacklist_sender(state: State<AppState>, from_addr: String) -> Result<(), String> {
+    let (name, email) = if let Some(start) = from_addr.find('<') {
+        let n = from_addr[..start].trim().trim_matches('"').to_string();
+        let e = from_addr[start+1..].trim_end_matches('>').trim().to_string();
+        (n, e)
+    } else {
+        (String::new(), from_addr.trim().to_string())
+    };
+    if email.is_empty() { return Ok(()); }
+    let conn = state.db.lock().unwrap();
+    conn.execute(
+        "INSERT INTO contacts (name,email,phone,company,notes,is_blacklisted) VALUES (?1,?2,'','','',1)
+         ON CONFLICT(email) DO UPDATE SET is_blacklisted=1,
+         name=CASE WHEN excluded.name!='' THEN excluded.name ELSE name END",
+        params![name, email],
+    ).map_err(|e| e.to_string())?;
+    // Перемещаем уже существующие письма от этого адреса в Спам
+    conn.execute(
+        "UPDATE emails SET folder='Spam'
+         WHERE folder!='Spam' AND INSTR(LOWER(from_addr), LOWER(?1)) > 0",
+        params![email],
+    ).ok();
+    Ok(())
+}
+
+#[tauri::command]
+fn toggle_contact_blacklist(state: State<AppState>, id: i64) -> Result<bool, String> {
+    let conn = state.db.lock().unwrap();
+    let (current, email): (i32, String) = conn.query_row(
+        "SELECT is_blacklisted, email FROM contacts WHERE id=?1", params![id],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    ).map_err(|e| e.to_string())?;
+    let new_val = if current == 0 { 1i32 } else { 0i32 };
+    conn.execute("UPDATE contacts SET is_blacklisted=?1 WHERE id=?2", params![new_val, id])
+        .map_err(|e| e.to_string())?;
+    // При блокировке — перемещаем существующие письма в Спам
+    if new_val == 1 && !email.is_empty() {
+        conn.execute(
+            "UPDATE emails SET folder='Spam'
+             WHERE folder!='Spam' AND INSTR(LOWER(from_addr), LOWER(?1)) > 0",
+            params![email],
+        ).ok();
+    }
+    Ok(new_val != 0)
 }
 
 #[tauri::command]
@@ -2969,6 +3259,8 @@ fn main() {
             update_account,
             delete_account,
             sync_folder,
+            full_sync_folder,
+            cancel_full_sync,
             get_emails,
             search_emails,
             get_email_body,
@@ -2981,6 +3273,7 @@ fn main() {
             unblock_sender,
             get_data_dir_path,
             open_data_dir,
+            open_folder,
             get_log_tail,
             clear_log,
             reset_folder_state,
@@ -2997,6 +3290,7 @@ fn main() {
             clear_trash,
             delete_emails_bulk,
             mark_read_bulk,
+            mark_all_read,
             send_mail,
             send_mdn,
             dismiss_read_receipt,
@@ -3021,6 +3315,8 @@ fn main() {
             set_contact_groups,
             get_contacts_by_group,
             add_contacts_to_group,
+            toggle_contact_blacklist,
+            blacklist_sender,
             prewarm_powershell,
             show_mail_notification,
             get_autostart,
