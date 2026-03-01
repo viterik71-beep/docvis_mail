@@ -2659,6 +2659,7 @@ struct Contact {
     phone:          String,
     company:        String,
     notes:          String,
+    #[serde(default)]
     is_blacklisted: bool,
 }
 
