@@ -298,6 +298,9 @@
             <div class="contacts-groups-bar" id="groupChipsBar"></div>
             <div class="contacts-select-bar" id="contactsSelectBar">
                 <span class="sel-count" id="contactsSelCount">0 выбрано</span>
+                <button class="ev-btn" style="font-size:12px;padding:4px 10px;" onclick="composeToSelectedContacts()">
+                    <i class="fas fa-pen"></i> Написать
+                </button>
                 <div class="group-assign-wrap">
                     <button class="ev-btn" style="font-size:12px;padding:4px 10px;" onclick="toggleGroupAssignDropdown()">
                         <i class="fas fa-users"></i> В группу <i class="fas fa-caret-down"></i>
@@ -366,6 +369,13 @@
                 <span>Прикрепить файл <span class="attach-zone-hint">или перетащите</span></span>
             </div>
             <div id="composeAttachList" class="compose-attach-list"></div>
+            <div id="composeImgBanner" class="img-block-banner compose-img-banner" style="display:none;">
+                <i class="fas fa-eye-slash"></i>
+                <span>Внешние изображения в цитате скрыты</span>
+                <button class="ev-btn" onclick="showComposeImages()">
+                    <i class="fas fa-image"></i> Показать
+                </button>
+            </div>
             <div id="composeBody" class="compose-textarea" contenteditable="true" data-placeholder="Текст письма..."></div>
         </div>
         <div class="compose-footer">

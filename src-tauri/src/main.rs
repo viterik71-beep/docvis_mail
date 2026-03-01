@@ -35,6 +35,18 @@ struct Account {
     password: String,
 }
 
+/// Версия Account без пароля — безопасно отдаётся во фронтенд через Tauri bridge
+#[derive(Debug, Serialize, Clone)]
+struct AccountPublic {
+    id: i64,
+    email: String,
+    name: String,
+    imap_host: String,
+    imap_port: u16,
+    smtp_host: String,
+    smtp_port: u16,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 struct EmailItem {
     id: i64,
@@ -130,45 +142,50 @@ fn init_db(conn: &Connection) {
             imap_host TEXT NOT NULL,
             imap_port INTEGER NOT NULL DEFAULT 993,
             smtp_host TEXT NOT NULL,
-            smtp_port INTEGER NOT NULL DEFAULT 465,
-            password  TEXT NOT NULL
+            smtp_port INTEGER NOT NULL DEFAULT 465
         );
 
         CREATE TABLE IF NOT EXISTS emails (
-            id             INTEGER PRIMARY KEY AUTOINCREMENT,
-            account_id     INTEGER NOT NULL,
-            uid            INTEGER NOT NULL,
-            folder         TEXT NOT NULL DEFAULT 'INBOX',
-            from_addr      TEXT NOT NULL DEFAULT '',
-            to_addr        TEXT NOT NULL DEFAULT '',
-            cc_addr        TEXT NOT NULL DEFAULT '',
-            subject        TEXT NOT NULL DEFAULT '',
-            date           TEXT NOT NULL DEFAULT '',
-            body_text      TEXT NOT NULL DEFAULT '',
-            body_html      TEXT NOT NULL DEFAULT '',
-            is_read        INTEGER NOT NULL DEFAULT 0,
-            is_starred     INTEGER NOT NULL DEFAULT 0,
-            has_attachment INTEGER NOT NULL DEFAULT 0,
-            message_id     TEXT NOT NULL DEFAULT '',
+            id                INTEGER PRIMARY KEY AUTOINCREMENT,
+            account_id        INTEGER NOT NULL,
+            uid               INTEGER NOT NULL,
+            folder            TEXT    NOT NULL DEFAULT 'INBOX',
+            from_addr         TEXT    NOT NULL DEFAULT '',
+            to_addr           TEXT    NOT NULL DEFAULT '',
+            cc_addr           TEXT    NOT NULL DEFAULT '',
+            subject           TEXT    NOT NULL DEFAULT '',
+            date              TEXT    NOT NULL DEFAULT '',
+            body_text         TEXT    NOT NULL DEFAULT '',
+            body_html         TEXT    NOT NULL DEFAULT '',
+            is_read           INTEGER NOT NULL DEFAULT 0,
+            is_starred        INTEGER NOT NULL DEFAULT 0,
+            has_attachment    INTEGER NOT NULL DEFAULT 0,
+            message_id        TEXT    NOT NULL DEFAULT '',
+            snippet           TEXT    NOT NULL DEFAULT '',
+            date_ts           INTEGER NOT NULL DEFAULT 0,
+            read_receipt_to   TEXT,
+            read_receipt_sent INTEGER NOT NULL DEFAULT 0,
             UNIQUE(account_id, uid, folder)
         );
 
         CREATE TABLE IF NOT EXISTS attachments (
-            id        INTEGER PRIMARY KEY AUTOINCREMENT,
-            email_id  INTEGER NOT NULL,
-            filename  TEXT NOT NULL DEFAULT '',
-            mime_type TEXT NOT NULL DEFAULT '',
-            file_path TEXT NOT NULL DEFAULT '',
-            file_size INTEGER NOT NULL DEFAULT 0
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            email_id   INTEGER NOT NULL,
+            filename   TEXT    NOT NULL DEFAULT '',
+            mime_type  TEXT    NOT NULL DEFAULT '',
+            file_path  TEXT    NOT NULL DEFAULT '',
+            file_size  INTEGER NOT NULL DEFAULT 0,
+            saved_path TEXT
         );
 
         CREATE TABLE IF NOT EXISTS contacts (
-            id      INTEGER PRIMARY KEY AUTOINCREMENT,
-            name    TEXT NOT NULL DEFAULT '',
-            email   TEXT NOT NULL DEFAULT '',
-            phone   TEXT NOT NULL DEFAULT '',
-            company TEXT NOT NULL DEFAULT '',
-            notes   TEXT NOT NULL DEFAULT '',
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            name           TEXT    NOT NULL DEFAULT '',
+            email          TEXT    NOT NULL DEFAULT '',
+            phone          TEXT    NOT NULL DEFAULT '',
+            company        TEXT    NOT NULL DEFAULT '',
+            notes          TEXT    NOT NULL DEFAULT '',
+            is_blacklisted INTEGER NOT NULL DEFAULT 0,
             UNIQUE(email)
         );
 
@@ -184,93 +201,33 @@ fn init_db(conn: &Connection) {
         );
 
         CREATE TABLE IF NOT EXISTS blocked_senders (
-            id      INTEGER PRIMARY KEY AUTOINCREMENT,
-            email   TEXT NOT NULL UNIQUE COLLATE NOCASE
+            id    INTEGER PRIMARY KEY AUTOINCREMENT,
+            email TEXT NOT NULL UNIQUE COLLATE NOCASE
         );
-    ").expect("DB init failed");
 
-    // Миграции для существующих БД
-    conn.execute_batch("
-        ALTER TABLE attachments ADD COLUMN saved_path TEXT;
-    ").ok();
-    conn.execute_batch("
         CREATE TABLE IF NOT EXISTS folder_state (
             account_id INTEGER NOT NULL,
-            folder     TEXT NOT NULL,
+            folder     TEXT    NOT NULL,
             last_uid   INTEGER NOT NULL DEFAULT 0,
             PRIMARY KEY (account_id, folder)
         );
-    ").ok();
-    // Оптимизация: заранее вычисленный сниппет и Unix-таймстамп даты
-    conn.execute_batch("ALTER TABLE emails ADD COLUMN snippet TEXT NOT NULL DEFAULT '';").ok();
-    conn.execute_batch("ALTER TABLE emails ADD COLUMN date_ts INTEGER NOT NULL DEFAULT 0;").ok();
-    // Индекс для быстрой выборки по папке
-    conn.execute_batch("
-        CREATE INDEX IF NOT EXISTS idx_emails_list
-        ON emails(account_id, folder, date_ts DESC);
-    ").ok();
-    // Запрос уведомления о прочтении (MDN, RFC 3798)
-    conn.execute_batch("ALTER TABLE emails ADD COLUMN read_receipt_to TEXT;").ok();
-    conn.execute_batch("ALTER TABLE emails ADD COLUMN read_receipt_sent INTEGER NOT NULL DEFAULT 0;").ok();
 
-    // Пользовательские папки (кеш IMAP LIST)
-    conn.execute_batch("
         CREATE TABLE IF NOT EXISTS user_folders (
             id         INTEGER PRIMARY KEY AUTOINCREMENT,
             account_id INTEGER NOT NULL,
-            name       TEXT NOT NULL,
+            name       TEXT    NOT NULL,
             UNIQUE(account_id, name)
         );
-    ").ok();
 
-    // Чёрный список контактов
-    conn.execute_batch("ALTER TABLE contacts ADD COLUMN is_blacklisted INTEGER NOT NULL DEFAULT 0;").ok();
+        CREATE INDEX IF NOT EXISTS idx_emails_list
+        ON emails(account_id, folder, date_ts DESC);
+    ").expect("DB init failed");
 
     // Группа по умолчанию
     conn.execute(
         "INSERT OR IGNORE INTO contact_groups (name) VALUES ('Мои контакты')",
         [],
     ).ok();
-}
-
-/// Заполняет date_ts для старых писем у которых date_ts=0 (одноразовая миграция).
-/// Письма добавленные до введения колонки date_ts получили DEFAULT 0 и не попадали
-/// в индекс по дате — запросы ORDER BY date_ts DESC становились O(N).
-fn backfill_date_ts(conn: &Connection) {
-    let count: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM emails WHERE date_ts = 0 AND date != ''",
-        [], |r| r.get(0),
-    ).unwrap_or(0);
-    if count == 0 { return; }
-
-    log_to_file(&format!("backfill_date_ts: fixing {} emails with date_ts=0", count));
-
-    let mut stmt = match conn.prepare(
-        "SELECT id, date FROM emails WHERE date_ts = 0 AND date != ''"
-    ) {
-        Ok(s) => s,
-        Err(_) => return,
-    };
-
-    let Ok(mapped) = stmt.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))
-        else { return };
-    let rows: Vec<(i64, String)> = mapped.filter_map(|r| r.ok()).collect();
-
-    // Обновляем в одной транзакции для скорости
-    let _ = conn.execute_batch("BEGIN");
-    for (id, date_str) in &rows {
-        if let Ok(ts) = mailparse::dateparse(date_str) {
-            conn.execute(
-                "UPDATE emails SET date_ts = ?1 WHERE id = ?2",
-                params![ts, id],
-            ).ok();
-        }
-    }
-    let _ = conn.execute_batch("COMMIT");
-
-    // Обновляем статистику индекса чтобы планировщик запросов знал о новых данных
-    conn.execute_batch("ANALYZE emails").ok();
-    log_to_file(&format!("backfill_date_ts: done, fixed {} emails", rows.len()));
 }
 
 fn default_group_id(conn: &Connection) -> Option<i64> {
@@ -315,26 +272,6 @@ fn cred_get(email: &str) -> Option<String> {
 fn cred_delete(email: &str) {
     if let Ok(entry) = keyring::Entry::new(KEYRING_SERVICE, email) {
         let _ = entry.delete_password();
-    }
-}
-
-/// Миграция: если в БД ещё хранятся пароли открытым текстом — переносим в Credential Manager
-fn migrate_passwords(conn: &Connection) {
-    let Ok(mut stmt) = conn.prepare(
-        "SELECT email, password FROM accounts WHERE password != '' AND password IS NOT NULL"
-    ) else { return };
-
-    let Ok(rows) = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))) else { return };
-    let pairs: Vec<(String, String)> = rows.filter_map(|r| r.ok()).collect();
-
-    for (email, password) in pairs {
-        if cred_set(&email, &password).is_ok() {
-            conn.execute(
-                "UPDATE accounts SET password = '' WHERE email = ?1",
-                params![email],
-            ).ok();
-            log_to_file(&format!("Migrated password for {} to Credential Manager", email));
-        }
     }
 }
 
@@ -477,6 +414,18 @@ fn log_to_file(msg: &str) {
     }
 }
 
+/// Ротация лога: если mail.log > 5 МБ — переименовываем в mail.log.old
+fn rotate_log_if_needed() {
+    let path = get_data_dir().join("mail.log");
+    const MAX_SIZE: u64 = 5 * 1024 * 1024; // 5 МБ
+    if let Ok(meta) = std::fs::metadata(&path) {
+        if meta.len() > MAX_SIZE {
+            let old = get_data_dir().join("mail.log.old");
+            let _ = std::fs::rename(&path, &old);
+        }
+    }
+}
+
 fn get_db_path() -> std::path::PathBuf {
     get_data_dir().join("mail.db")
 }
@@ -509,11 +458,15 @@ fn extract_filename(cd: &str, ct_header: &str) -> String {
 }
 
 fn sanitize_filename(name: &str) -> String {
-    name.chars()
+    let s: String = name.chars()
         .filter(|c| !matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|'))
-        .collect::<String>()
-        .trim()
-        .to_string()
+        .collect();
+    let s = s.trim().to_string();
+    // Предотвращаем path traversal: ".." или "." как имя файла
+    if s == ".." || s == "." || s.is_empty() {
+        return "attachment".to_string();
+    }
+    s
 }
 
 fn collect_attachments(
@@ -1066,19 +1019,19 @@ fn show_mail_notification(
     email_id: i64,
     duration_secs: Option<u32>,
 ) -> Result<(), String> {
-    let from_safe = from_name.replace('\'', "''");
-    let subject_safe = subject.replace('\'', "''");
     let stack_index = ACTIVE_NOTIFS.fetch_add(1, Ordering::SeqCst);
     let duration = duration_secs.unwrap_or(5); // 0 = не скрывать автоматически
 
     let temp_path = std::env::temp_dir()
         .join(format!("docvis_mail_notif_{}.ps1", stack_index));
 
+    // Данные передаём через переменные окружения — никакой интерполяции в код скрипта.
+    // Это полностью исключает инъекцию через имя отправителя или тему письма.
     let mut script = String::new();
     script.push_str("Add-Type -AssemblyName PresentationFramework\n");
     script.push_str("Add-Type -AssemblyName PresentationCore\n");
-    script.push_str(&format!("$fromName = '{}'\n", from_safe));
-    script.push_str(&format!("$subject = '{}'\n", subject_safe));
+    script.push_str("$fromName = $env:NOTIF_FROM\n");
+    script.push_str("$subject  = $env:NOTIF_SUBJECT\n");
     script.push_str(&format!("$stackIndex = {}\n", stack_index));
     script.push_str(&format!("$notifDuration = {}\n", duration));
     script.push_str(MAIL_NOTIF_BODY);
@@ -1094,6 +1047,8 @@ fn show_mail_notification(
         let result = std::process::Command::new("powershell")
             .args(["-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden",
                    "-File", &ps_path])
+            .env("NOTIF_FROM",    &from_name)
+            .env("NOTIF_SUBJECT", &subject)
             .creation_flags(CREATE_NO_WINDOW)
             .output();
 
@@ -1369,13 +1324,13 @@ fn get_account_by_id(conn: &Connection, id: i64) -> Result<Account, String> {
 }
 
 #[tauri::command]
-fn get_accounts(state: State<AppState>) -> Result<Vec<Account>, String> {
+fn get_accounts(state: State<AppState>) -> Result<Vec<AccountPublic>, String> {
     let conn = state.db.lock().unwrap();
     let mut stmt = conn.prepare(
         "SELECT id, email, name, imap_host, imap_port, smtp_host, smtp_port FROM accounts"
     ).map_err(|e| e.to_string())?;
 
-    let list: Vec<Account> = stmt.query_map([], |r| Ok(Account {
+    let list: Vec<AccountPublic> = stmt.query_map([], |r| Ok(AccountPublic {
         id:        r.get(0)?,
         email:     r.get(1)?,
         name:      r.get(2)?,
@@ -1383,14 +1338,8 @@ fn get_accounts(state: State<AppState>) -> Result<Vec<Account>, String> {
         imap_port: r.get(4)?,
         smtp_host: r.get(5)?,
         smtp_port: r.get(6)?,
-        password:  String::new(), // заполним ниже
     })).map_err(|e| e.to_string())?
     .filter_map(|r| r.ok())
-    .map(|mut acc| {
-        // Читаем пароль из Windows Credential Manager
-        acc.password = cred_get(&acc.email).unwrap_or_default();
-        acc
-    })
     .collect();
 
     Ok(list)
@@ -1432,13 +1381,12 @@ fn save_account(
     // Подключение успешно — сохраняем пароль в Windows Credential Manager
     cred_set(&email, &password)?;
 
-    // В БД храним пустую строку вместо пароля
     let conn = state.db.lock().unwrap();
     conn.execute(
-        "INSERT INTO accounts (email, name, password, imap_host, imap_port, smtp_host, smtp_port)
-         VALUES (?1,?2,'',?3,?4,?5,?6)
+        "INSERT INTO accounts (email, name, imap_host, imap_port, smtp_host, smtp_port)
+         VALUES (?1,?2,?3,?4,?5,?6)
          ON CONFLICT(email) DO UPDATE SET
-           name=excluded.name, password='',
+           name=excluded.name,
            imap_host=excluded.imap_host, imap_port=excluded.imap_port,
            smtp_host=excluded.smtp_host, smtp_port=excluded.smtp_port",
         params![email, name, imap_host, imap_port as i64, smtp_host, smtp_port as i64],
@@ -1467,11 +1415,18 @@ fn update_account(
         ).map_err(|_| "Аккаунт не найден".to_string())?
     };
 
-    // Проверяем подключение с новыми данными до сохранения
-    verify_imap(&email, &password, &imap_host, imap_port)?;
+    // Если пользователь не менял пароль (поле пустое) — берём из Keyring
+    let actual_password = if password.is_empty() {
+        cred_get(&email).ok_or_else(|| "Пароль не найден в хранилище".to_string())?
+    } else {
+        password
+    };
 
-    // Сохраняем новый пароль в Windows Credential Manager
-    cred_set(&email, &password)?;
+    // Проверяем подключение с актуальными данными до сохранения
+    verify_imap(&email, &actual_password, &imap_host, imap_port)?;
+
+    // Сохраняем пароль в Windows Credential Manager
+    cred_set(&email, &actual_password)?;
 
     // Обновляем настройки в БД (пароль не хранится)
     let conn = state.db.lock().unwrap();
@@ -2203,6 +2158,52 @@ fn get_draft_count(state: State<AppState>, account_id: i64) -> Result<i64, Strin
     ).map_err(|e| e.to_string())
 }
 
+/// Разбирает строку "Имя <a@b.com>, c@d.com, ..." в список Mailbox.
+/// Корректно обрабатывает имена в кавычках и запятые внутри <>.
+fn parse_mailbox_list(s: &str) -> Result<Vec<lettre::message::Mailbox>, String> {
+    let mut result = Vec::new();
+    let mut depth: usize = 0; // глубина вложенности <>
+    let mut start: usize = 0;
+
+    for (i, b) in s.bytes().enumerate() {
+        match b {
+            b'<' => depth += 1,
+            b'>' => { if depth > 0 { depth -= 1; } }
+            b',' if depth == 0 => {
+                let part = s[start..i].trim();
+                if !part.is_empty() {
+                    result.push(parse_single_mailbox(part)?);
+                }
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    let last = s[start..].trim();
+    if !last.is_empty() {
+        result.push(parse_single_mailbox(last)?);
+    }
+    Ok(result)
+}
+
+fn parse_single_mailbox(s: &str) -> Result<lettre::message::Mailbox, String> {
+    if let (Some(lt), Some(gt)) = (s.find('<'), s.rfind('>')) {
+        let name = s[..lt].trim().trim_matches('"').trim().to_string();
+        let email_str = s[lt + 1..gt].trim();
+        let addr: lettre::Address = email_str.parse()
+            .map_err(|e| format!("Некорректный email '{}': {}", email_str, e))?;
+        Ok(lettre::message::Mailbox::new(
+            if name.is_empty() { None } else { Some(name) },
+            addr,
+        ))
+    } else {
+        let email_str = s.trim();
+        let addr: lettre::Address = email_str.parse()
+            .map_err(|e| format!("Некорректный email '{}': {}", email_str, e))?;
+        Ok(lettre::message::Mailbox::new(None, addr))
+    }
+}
+
 #[tauri::command]
 async fn send_mail(state: State<'_, AppState>, req: SendMailRequest) -> Result<(), String> {
     let account: Account = {
@@ -2218,27 +2219,26 @@ async fn send_mail(state: State<'_, AppState>, req: SendMailRequest) -> Result<(
         from_addr,
     );
 
-    // Поле "Кому" — извлекаем чистый email из "Имя <email>" или просто "email"
-    let to_str = req.to.trim();
-    let to_email_str = if let Some(start) = to_str.find('<') {
-        to_str[start+1..].trim_end_matches('>').trim()
-    } else {
-        to_str
-    };
-    let to_addr: lettre::Address = to_email_str.parse()
-        .map_err(|e| format!("Email получателя: {}", e))?;
-    let to_mailbox = lettre::message::Mailbox::new(None, to_addr);
+    // Поле "Кому" — поддерживаем несколько адресов через запятую
+    let to_mailboxes = parse_mailbox_list(req.to.trim())
+        .map_err(|e| format!("Поле «Кому»: {}", e))?;
+    if to_mailboxes.is_empty() {
+        return Err("Не указан получатель".to_string());
+    }
 
-    let mut builder = Message::builder()
-        .from(from_mailbox)
-        .to(to_mailbox)
-        .subject(&req.subject);
+    let mut builder = Message::builder().from(from_mailbox);
+    for mb in to_mailboxes {
+        builder = builder.to(mb);
+    }
+    builder = builder.subject(&req.subject);
 
+    // Поле "Копия" — тоже поддерживаем несколько адресов
     if !req.cc.trim().is_empty() {
-        let cc_str = req.cc.trim();
-        let cc_addr: lettre::Address = cc_str.parse()
-            .map_err(|e| format!("Email копии: {}", e))?;
-        builder = builder.cc(lettre::message::Mailbox::new(None, cc_addr));
+        let cc_mailboxes = parse_mailbox_list(req.cc.trim())
+            .map_err(|e| format!("Поле «Копия»: {}", e))?;
+        for mb in cc_mailboxes {
+            builder = builder.cc(mb);
+        }
     }
 
     // Запрос уведомления о прочтении (MDN, RFC 3798)
@@ -2306,28 +2306,31 @@ async fn send_mail(state: State<'_, AppState>, req: SendMailRequest) -> Result<(
         let has_attach = !req.attachments.is_empty();
         let snippet = snippet_from_text(&req.body, 100);
 
+        // Вставляем с uid=-1, затем обновляем uid=id — гарантирует уникальность
+        // (аналогично черновикам, избегает коллизии date_ts при нескольких письмах за секунду)
         conn.execute(
             "INSERT INTO emails
              (account_id, uid, folder, from_addr, to_addr, cc_addr, subject, date, date_ts,
               body_text, body_html, has_attachment, snippet, is_read)
-             VALUES (?1,?2,'Sent',?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,1)",
+             VALUES (?1,-1,'Sent',?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,1)",
             params![
-                req.account_id, date_ts,
+                req.account_id,
                 account.email, req.to, req.cc, req.subject, now, date_ts,
                 req.body, html_body_saved, has_attach as i32, snippet
             ],
         ).ok();
+        let sent_id = conn.last_insert_rowid();
+        conn.execute("UPDATE emails SET uid=?1 WHERE id=?1", params![sent_id]).ok();
 
         // Сохраняем вложения на диск и в таблицу attachments
         if has_attach {
-            let email_id = conn.last_insert_rowid();
-            let dir = attachments_dir(email_id);
+            let dir = attachments_dir(sent_id);
             for att in &req.attachments {
                 let data = B64.decode(&att.data_b64).unwrap_or_default();
                 let safe_name = if att.filename.is_empty() {
                     format!("attachment_{}.bin", chrono::Local::now().timestamp_millis())
                 } else {
-                    att.filename.clone()
+                    sanitize_filename(&att.filename)
                 };
                 let file_path = dir.join(&safe_name);
                 if std::fs::write(&file_path, &data).is_ok() {
@@ -2335,7 +2338,7 @@ async fn send_mail(state: State<'_, AppState>, req: SendMailRequest) -> Result<(
                     conn.execute(
                         "INSERT INTO attachments (email_id, filename, mime_type, file_path, file_size)
                          VALUES (?1,?2,?3,?4,?5)",
-                        params![email_id, safe_name, att.mime_type, path_str, data.len() as i64],
+                        params![sent_id, safe_name, att.mime_type, path_str, data.len() as i64],
                     ).ok();
                 }
             }
@@ -3113,6 +3116,8 @@ fn set_autostart(enable: bool) -> Result<(), String> {
 // ─── main ────────────────────────────────────────────────────────────────────
 
 fn main() {
+    rotate_log_if_needed();
+
     // Если есть отложенное восстановление — применяем до открытия БД
     let pending = get_data_dir().join("pending_restore.db");
     if pending.exists() {
@@ -3145,8 +3150,6 @@ fn main() {
     ).ok();
 
     init_db(&conn);
-    backfill_date_ts(&conn);  // Исправляем date_ts=0 у старых писем (одноразово)
-    migrate_passwords(&conn); // Переносим пароли из БД в Credential Manager
 
     let start_minimized = std::env::args().any(|a| a == "--minimized");
 

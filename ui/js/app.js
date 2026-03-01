@@ -755,8 +755,7 @@ async function saveEditAccount() {
     if (!a) return;
 
     const name     = document.getElementById('editAccountName').value.trim() || a.email;
-    const newPwd   = document.getElementById('editAccountPassword').value;
-    const password = newPwd || a.password;  // если поле пустое — используем текущий пароль
+    const password = document.getElementById('editAccountPassword').value; // пустой → Rust возьмёт из Keyring
     const imapHost = document.getElementById('editImapHost').value.trim();
     const imapPort = parseInt(document.getElementById('editImapPort').value) || 993;
     const smtpHost = document.getElementById('editSmtpHost').value.trim();
@@ -1763,8 +1762,11 @@ async function replyTo(id) {
         document.getElementById('composeSubject').value =
             email.subject.startsWith('Re:') ? email.subject : 'Re: ' + email.subject;
 
-        const origHtml = email.body_html
-            || `<pre style="white-space:pre-wrap;margin:0">${escHtml(email.body_text)}</pre>`;
+        // sanitizeHtmlForCompose: санитизация XSS + блокировка внешних изображений.
+        // composeBody — основное окно Tauri (не iframe-sandbox), внешние src загрузились бы сразу.
+        const { html: origHtml, hasExternalImages } = email.body_html
+            ? sanitizeHtmlForCompose(email.body_html)
+            : { html: `<pre style="white-space:pre-wrap;margin:0">${escHtml(email.body_text)}</pre>`, hasExternalImages: false };
         const body = document.getElementById('composeBody');
         body.innerHTML =
             `<p><br></p>` +
@@ -1772,6 +1774,7 @@ async function replyTo(id) {
             `<div class="compose-quote-header">${escHtml(email.from_addr)} написал(а):</div>` +
             origHtml +
             `</blockquote>`;
+        document.getElementById('composeImgBanner').style.display = hasExternalImages ? '' : 'none';
         composeMoveCursorToStart(body);
     } catch {}
 }
@@ -1797,8 +1800,10 @@ async function forwardEmail(id) {
             `<b>Дата:</b> ${escHtml(email.date)}`,
             `<b>Тема:</b> ${escHtml(email.subject)}`,
         ].join('<br>');
-        const origHtml = email.body_html
-            || `<pre style="white-space:pre-wrap;margin:0">${escHtml(email.body_text)}</pre>`;
+        // sanitizeHtmlForCompose: санитизация XSS + блокировка внешних изображений
+        const { html: origHtml, hasExternalImages } = email.body_html
+            ? sanitizeHtmlForCompose(email.body_html)
+            : { html: `<pre style="white-space:pre-wrap;margin:0">${escHtml(email.body_text)}</pre>`, hasExternalImages: false };
 
         const body = document.getElementById('composeBody');
         body.innerHTML =
@@ -1807,6 +1812,7 @@ async function forwardEmail(id) {
             `<div class="compose-quote-header">-------- Пересланное сообщение --------<br>${metaHtml}</div>` +
             `<div>${origHtml}</div>` +
             `</div>`;
+        document.getElementById('composeImgBanner').style.display = hasExternalImages ? '' : 'none';
         composeMoveCursorToStart(body);
 
         // Прикрепляем оригинальные вложения
@@ -1908,10 +1914,13 @@ function openAddrPicker(inputId) {
     _pickerSelected = new Map();
     document.getElementById('addrPickerSearch').value = '';
     document.getElementById('addrPickerModal').style.display = 'flex';
-    if (!contactsLoaded) {
-        invoke('get_contacts').then(list => {
-            contacts = list; contactsLoaded = true; renderPickerList('');
-        }).catch(() => {});
+    const needContacts = !contactsLoaded;
+    const needGroups   = groups.length === 0;
+    if (needContacts || needGroups) {
+        const promises = [];
+        if (needContacts) promises.push(invoke('get_contacts').then(list => { contacts = list; contactsLoaded = true; }));
+        if (needGroups)   promises.push(invoke('get_groups').then(list => { groups = list; }));
+        Promise.all(promises).then(() => renderPickerList('')).catch(() => {});
     }
     renderPickerList('');
     updatePickerFooter();
@@ -1960,12 +1969,27 @@ function confirmPickerSelection() {
 
 function renderPickerList(term) {
     const q = term.trim().toLowerCase();
+    const el = document.getElementById('addrPickerList');
+    let html = '';
+
+    // — Секция "Группы"
+    const matchedGroups = groups.filter(g => !q || g.name.toLowerCase().includes(q));
+    if (matchedGroups.length > 0) {
+        html += `<div class="contact-group-letter">Группы</div>`;
+        html += matchedGroups.map(g => `
+            <div class="addr-picker-group-item" onclick="togglePickerGroup(${g.id})">
+                <i class="fas fa-users addr-picker-group-icon"></i>
+                <div class="cd-name">${escHtml(g.name)}</div>
+                <i class="fas fa-chevron-right addr-picker-group-arrow"></i>
+            </div>`).join('');
+    }
+
+    // — Секция "Контакты"
     const list = q
         ? contacts.filter(c => c.name.toLowerCase().includes(q) || c.email.toLowerCase().includes(q))
         : contacts;
 
-    const el = document.getElementById('addrPickerList');
-    if (list.length === 0) {
+    if (list.length === 0 && matchedGroups.length === 0) {
         el.innerHTML = `<div class="addr-picker-empty">
             <i class="fas fa-${q ? 'search' : 'users'}"></i>
             <p>${q ? 'Ничего не найдено' : 'Нет контактов'}</p>
@@ -1973,36 +1997,55 @@ function renderPickerList(term) {
         return;
     }
 
-    const groups = {};
-    for (const c of list) {
-        const key = (c.name || c.email || '?')[0].toUpperCase();
-        const letter = /[А-ЯЁA-Z]/.test(key) ? key : '#';
-        if (!groups[letter]) groups[letter] = [];
-        groups[letter].push(c);
+    if (list.length > 0) {
+        const letterGroups = {};
+        for (const c of list) {
+            const key = (c.name || c.email || '?')[0].toUpperCase();
+            const letter = /[А-ЯЁA-Z]/.test(key) ? key : '#';
+            if (!letterGroups[letter]) letterGroups[letter] = [];
+            letterGroups[letter].push(c);
+        }
+        const letters = Object.keys(letterGroups).sort((a, b) => {
+            if (a === '#') return 1; if (b === '#') return -1;
+            return a.localeCompare(b, 'ru');
+        });
+        html += letters.map(letter => `
+            <div class="contact-group-letter">${letter}</div>
+            ${letterGroups[letter].map(c => {
+                const display = c.name ? `${c.name} <${c.email}>` : c.email;
+                const checked = _pickerSelected.has(c.email);
+                return `<div class="addr-picker-item ${checked ? 'picker-checked' : ''}"
+                             data-email="${escHtml(c.email)}" data-display="${escHtml(display)}"
+                             onclick="togglePickerItem(this)">
+                    <input type="checkbox" class="picker-check" ${checked ? 'checked' : ''}
+                           onclick="event.stopPropagation(); togglePickerItem(this.closest('.addr-picker-item'))">
+                    <div class="cd-avatar" style="background:${senderColor(c.email)}">${senderInitials(display)}</div>
+                    <div>
+                        <div class="cd-name">${escHtml(c.name || c.email)}</div>
+                        ${c.name ? `<div class="cd-email">${escHtml(c.email)}</div>` : ''}
+                    </div>
+                </div>`;
+            }).join('')}
+        `).join('');
     }
-    const letters = Object.keys(groups).sort((a, b) => {
-        if (a === '#') return 1; if (b === '#') return -1;
-        return a.localeCompare(b, 'ru');
-    });
 
-    el.innerHTML = letters.map(letter => `
-        <div class="contact-group-letter">${letter}</div>
-        ${groups[letter].map(c => {
-            const display = c.name ? `${c.name} <${c.email}>` : c.email;
-            const checked = _pickerSelected.has(c.email);
-            return `<div class="addr-picker-item ${checked ? 'picker-checked' : ''}"
-                         data-email="${escHtml(c.email)}" data-display="${escHtml(display)}"
-                         onclick="togglePickerItem(this)">
-                <input type="checkbox" class="picker-check" ${checked ? 'checked' : ''}
-                       onclick="event.stopPropagation(); togglePickerItem(this.closest('.addr-picker-item'))">
-                <div class="cd-avatar" style="background:${senderColor(c.email)}">${senderInitials(display)}</div>
-                <div>
-                    <div class="cd-name">${escHtml(c.name || c.email)}</div>
-                    ${c.name ? `<div class="cd-email">${escHtml(c.email)}</div>` : ''}
-                </div>
-            </div>`;
-        }).join('')}
-    `).join('');
+    el.innerHTML = html;
+}
+
+async function togglePickerGroup(groupId) {
+    try {
+        const list = await invoke('get_contacts_by_group', { groupId });
+        for (const c of list) {
+            if (c.email) {
+                const display = c.name ? `${c.name} <${c.email}>` : c.email;
+                _pickerSelected.set(c.email, display);
+            }
+        }
+        renderPickerList(document.getElementById('addrPickerSearch').value);
+        updatePickerFooter();
+    } catch (e) {
+        console.error('togglePickerGroup:', e);
+    }
 }
 
 function openCompose(title = 'Новое письмо') {
@@ -2016,6 +2059,7 @@ function openCompose(title = 'Новое письмо') {
         sig ? `<p><br></p><p>--<br>${sig.replace(/\n/g, '<br>')}</p>` : '';
     document.getElementById('composeError').style.display = 'none';
     document.getElementById('draftSavedHint').style.display = 'none';
+    document.getElementById('composeImgBanner').style.display = 'none';
     composeFiles = [];
     _forwardHtml = null;
     renderComposeAttachList();
@@ -2895,6 +2939,23 @@ function openComposeToContact(email) {
     }, 50);
 }
 
+function composeToSelectedContacts() {
+    const emails = [...selectedContactIds]
+        .map(id => {
+            const c = contacts.find(x => x.id === id);
+            if (!c || !c.email) return null;
+            return c.name ? `${c.name} <${c.email}>` : c.email;
+        })
+        .filter(Boolean)
+        .join(', ');
+    if (!emails) return;
+    switchView('mail');
+    openCompose();
+    setTimeout(() => {
+        document.getElementById('composeTo').value = emails;
+    }, 50);
+}
+
 function newContact() {
     currentContactId = null;
     document.querySelectorAll('.contact-list-item').forEach(el => el.classList.remove('active'));
@@ -3179,6 +3240,34 @@ async function saveAddContactModal() {
         btn.disabled = false;
         btn.innerHTML = '<i class="fas fa-save"></i> Сохранить';
     }
+}
+
+/// Санитизация + блокировка внешних изображений для вставки в compose-редактор.
+// Возвращает { html, hasExternalImages }.
+// Сохраняет оригинальный src в data-src, чтобы кнопка «Показать» могла восстановить.
+function sanitizeHtmlForCompose(html) {
+    const sanitized = sanitizeHtml(html);
+    const BLANK = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+    const doc = new DOMParser().parseFromString(sanitized, 'text/html');
+    let hasExternalImages = false;
+    doc.querySelectorAll('img[src]').forEach(img => {
+        const src = img.getAttribute('src');
+        if (src && !src.startsWith('data:') && !src.startsWith('cid:')) {
+            img.setAttribute('data-src', src);
+            img.setAttribute('src', BLANK);
+            img.style.maxWidth = '100%';
+            hasExternalImages = true;
+        }
+    });
+    return { html: doc.body.innerHTML, hasExternalImages };
+}
+
+function showComposeImages() {
+    document.getElementById('composeBody').querySelectorAll('img[data-src]').forEach(img => {
+        img.src = img.getAttribute('data-src');
+        img.removeAttribute('data-src');
+    });
+    document.getElementById('composeImgBanner').style.display = 'none';
 }
 
 // Санитизация HTML писем через DOMPurify
