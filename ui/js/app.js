@@ -453,43 +453,47 @@ const URL_SHORTENERS = new Set([
     'short.link','rb.gy','clck.ru','vk.cc','u.to',
 ]);
 
-async function showLinkWarning(url) {
-    const warnings = [];
+function showLinkWarning(url) {
+    const extraWarnings = [];
     let parsedHost = '';
     try {
         const u = new URL(url);
         parsedHost = u.hostname.toLowerCase();
         if (u.protocol === 'http:')
-            warnings.push('Незащищённое соединение (HTTP, не HTTPS)');
+            extraWarnings.push('Незащищённое соединение (HTTP, не HTTPS)');
         if (/^(\d{1,3}\.){3}\d{1,3}$/.test(parsedHost))
-            warnings.push('Адрес ведёт на IP-адрес, а не на домен');
+            extraWarnings.push('Адрес ведёт на IP-адрес, а не на домен');
         if (URL_SHORTENERS.has(parsedHost))
-            warnings.push('Сокращённая ссылка — конечный адрес скрыт');
+            extraWarnings.push('Сокращённая ссылка — реальный адрес скрыт');
         if (/[^\x00-\x7F]/.test(parsedHost))
-            warnings.push('Домен содержит не-ASCII символы (возможна подмена)');
+            extraWarnings.push('Домен содержит нестандартные символы (возможна подмена)');
     } catch (_) {
-        warnings.push('Нераспознанный формат ссылки');
+        extraWarnings.push('Нераспознанный формат ссылки');
     }
 
-    const displayUrl = url.length > 120 ? url.slice(0, 117) + '…' : url;
+    const hasDanger = extraWarnings.length > 0;
+    const displayUrl = url.length > 100 ? url.slice(0, 97) + '…' : url;
+    const accentColor = hasDanger ? '#ef4444' : '#f59e0b';
 
     const overlay = document.createElement('div');
     overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;padding:20px;z-index:99999';
-    const warnColor = warnings.length ? '#f59e0b' : 'var(--text-secondary)';
     overlay.innerHTML = `
-      <div class="modal" style="max-width:520px;z-index:100000">
-        <div class="modal-header" style="color:${warnColor}">
-          <i class="fas fa-link"></i> Переход по ссылке
+      <div class="modal" style="max-width:500px;z-index:100000">
+        <div class="modal-header" style="color:${accentColor};gap:8px">
+          <i class="fas fa-exclamation-triangle"></i> Вы покидаете почтовый клиент
         </div>
-        <div class="modal-body">
-          <div style="font-size:12px;color:var(--text-secondary);margin-bottom:6px">Адрес назначения:</div>
-          <div style="background:var(--bg-secondary);border-radius:4px;padding:8px 10px;font-family:monospace;font-size:12px;word-break:break-all;max-height:80px;overflow-y:auto">${escHtml(displayUrl)}</div>
-          ${warnings.length ? `<div style="margin-top:10px;font-size:13px;color:#f59e0b;line-height:1.7">⚠ ${warnings.map(escHtml).join('<br>⚠ ')}</div>` : '<div style="margin-top:8px;font-size:13px;color:var(--text-secondary)">Ссылка выглядит безопасно.</div>'}
+        <div class="modal-body" style="font-size:13px;line-height:1.7;color:var(--text)">
+          <p style="margin:0 0 10px">Вы собираетесь перейти на внешний сайт. Сайт может содержать вредоносное содержимое. <b>Не переходите, если не уверены в отправителе.</b></p>
+          <div style="font-size:11px;color:var(--text-secondary);margin-bottom:4px">Адрес назначения:</div>
+          <div style="background:var(--bg-secondary);border:1px solid var(--border);border-radius:4px;padding:7px 10px;font-family:monospace;font-size:12px;word-break:break-all;max-height:72px;overflow-y:auto;user-select:all">${escHtml(displayUrl)}</div>
+          ${hasDanger ? `<div style="margin-top:10px;padding:8px 10px;background:rgba(239,68,68,0.08);border-left:3px solid #ef4444;border-radius:2px;font-size:12px;color:#ef4444;line-height:1.8">${extraWarnings.map(w => '⚠ ' + escHtml(w)).join('<br>')}</div>` : ''}
         </div>
-        <div class="modal-footer" style="display:flex;gap:8px;justify-content:flex-end;padding-top:12px">
-          <button class="ev-btn" id="_lnkCancel" style="background:var(--bg-secondary)">Отмена</button>
-          <button class="ev-btn" id="_lnkOpen" style="background:${warnings.length ? '#f59e0b' : 'var(--accent)'};color:#fff">
-            <i class="fas fa-external-link-alt"></i> Открыть в браузере
+        <div class="modal-footer" style="display:flex;gap:8px;justify-content:flex-end;padding-top:12px;border-top:1px solid var(--border);margin-top:4px">
+          <button class="ev-btn" id="_lnkOpen" style="background:${accentColor};color:#fff;order:2">
+            <i class="fas fa-external-link-alt"></i> Перейти на сайт
+          </button>
+          <button class="ev-btn" id="_lnkCancel" style="background:var(--accent);color:#fff;order:1">
+            <i class="fas fa-shield-alt"></i> Не переходить
           </button>
         </div>
       </div>`;
