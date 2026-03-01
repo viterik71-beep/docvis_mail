@@ -2472,6 +2472,39 @@ fn read_attachment_b64(file_path: String) -> Result<serde_json::Value, String> {
     Ok(serde_json::json!({ "b64": b64, "mime_type": mime }))
 }
 
+/// Расширения файлов, опасных при открытии пользователем.
+/// zip/rar/7z — стандартные архивы, остаются без изменений.
+const DANGEROUS_ATTACH_EXT: &[&str] = &[
+    // Исполняемые
+    "exe","msi","com","scr","pif","dll","cpl","ocx",
+    // Скрипты командной строки
+    "bat","cmd","ps1","psm1","psd1","ps2",
+    // Скрипты Windows
+    "vbs","vbe","jse","wsf","wsh",
+    // HTML-приложения и ярлыки
+    "hta","lnk","url",
+    // Реестр и автозапуск
+    "reg","inf",
+    // Office с макросами
+    "docm","dotm","xlsm","xlsb","xltm","pptm","potm","ppam","ppsm",
+    // Нестандартные/опасные архивы (iso монтируется и может autorun, cab устанавливает ПО)
+    "iso","img","cab","arj","ace","lzh","lha",
+];
+
+fn is_dangerous_attach_ext(filename: &str) -> bool {
+    let ext = filename.rsplit('.').next().unwrap_or("").to_lowercase();
+    DANGEROUS_ATTACH_EXT.contains(&ext.as_str())
+}
+
+/// "invoice.exe" → "invoice._exe", имя без расширения не меняется
+fn neutralize_filename(name: &str) -> String {
+    if let Some(pos) = name.rfind('.') {
+        format!("{}._{}", &name[..pos], &name[pos + 1..])
+    } else {
+        name.to_string()
+    }
+}
+
 fn build_attach_dest_dir(base: &std::path::Path, subfolder: Option<&str>) -> std::path::PathBuf {
     let now = chrono::Local::now();
     let month_ru = match now.month() {
@@ -2511,11 +2544,14 @@ fn open_attachment(
     file_path: String,
     save_base: Option<String>,
     subfolder: Option<String>,
+    neutralize: Option<bool>,
 ) -> Result<String, String> {
     let src = std::path::Path::new(&file_path);
     if !src.exists() {
         return Err("Файл не найден".to_string());
     }
+
+    let do_neutralize = neutralize.unwrap_or(false);
 
     // Проверяем: есть ли уже сохранённый путь для этого вложения
     let saved: Option<String> = {
@@ -2528,6 +2564,19 @@ fn open_attachment(
     };
 
     let sub = subfolder.as_deref();
+
+    /// Применяет нейтрализацию к имени файла если нужно
+    fn dest_filename(src: &std::path::Path, neutralize: bool) -> String {
+        let raw = src.file_name()
+            .unwrap_or_else(|| std::ffi::OsStr::new("attachment"))
+            .to_string_lossy()
+            .to_string();
+        if neutralize && is_dangerous_attach_ext(&raw) {
+            neutralize_filename(&raw)
+        } else {
+            raw
+        }
+    }
 
     let open_path = if let Some(ref sp) = saved {
         if std::path::Path::new(sp).exists() {
@@ -2542,8 +2591,8 @@ fn open_attachment(
                 });
             let dest_dir = build_attach_dest_dir(&base, sub);
             std::fs::create_dir_all(&dest_dir).ok();
-            let filename = src.file_name().unwrap_or_else(|| std::ffi::OsStr::new("attachment"));
-            let dest = dest_dir.join(filename);
+            let fname = dest_filename(src, do_neutralize);
+            let dest = dest_dir.join(&fname);
             std::fs::copy(src, &dest).map_err(|e| e.to_string())?;
             let saved_str = dest.to_string_lossy().to_string();
             let conn = state.db.lock().unwrap();
@@ -2561,8 +2610,8 @@ fn open_attachment(
             });
         let dest_dir = build_attach_dest_dir(&base, sub);
         std::fs::create_dir_all(&dest_dir).map_err(|e| e.to_string())?;
-        let filename = src.file_name().unwrap_or_else(|| std::ffi::OsStr::new("attachment"));
-        let dest = dest_dir.join(filename);
+        let fname = dest_filename(src, do_neutralize);
+        let dest = dest_dir.join(&fname);
         std::fs::copy(src, &dest).map_err(|e| e.to_string())?;
         let saved_str = dest.to_string_lossy().to_string();
         let conn = state.db.lock().unwrap();

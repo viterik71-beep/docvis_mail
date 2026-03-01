@@ -208,6 +208,10 @@ async function openSettings() {
     document.getElementById('settingsLeaveOnServer').checked =
         localStorage.getItem('mail-leave-on-server') !== 'false';
 
+    // Защита от опасных вложений
+    document.getElementById('settingsAttachProtect').checked =
+        localStorage.getItem('mail-attach-protect') !== 'false';
+
     // Уведомления
     const notifEnabled = localStorage.getItem('mail-notifications') !== 'false';
     document.getElementById('settingsNotifications').checked = notifEnabled;
@@ -391,6 +395,10 @@ function saveSettings() {
     // Оставлять на сервере
     localStorage.setItem('mail-leave-on-server',
         document.getElementById('settingsLeaveOnServer').checked ? 'true' : 'false');
+
+    // Защита от опасных вложений
+    localStorage.setItem('mail-attach-protect',
+        document.getElementById('settingsAttachProtect').checked ? 'true' : 'false');
 
     // Уведомления
     const notifEnabled = document.getElementById('settingsNotifications').checked;
@@ -2296,38 +2304,12 @@ function showComposeError(msg) {
 
 // ── Утилиты ────────────────────────────────────────────────────────────────
 
-// Расширения файлов, потенциально опасные при открытии
-const DANGEROUS_EXTENSIONS = new Set([
-    // Исполняемые файлы Windows
-    'exe', 'msi', 'com', 'scr', 'pif', 'dll', 'cpl', 'ocx',
-    // Скрипты командной строки
-    'bat', 'cmd', 'ps1', 'psm1', 'psd1', 'ps2',
-    // Скриптовые языки Windows
-    'vbs', 'vbe', 'jse', 'wsf', 'wsh',
-    // HTML-приложения и ярлыки
-    'hta', 'lnk', 'url',
-    // Реестр и автозапуск
-    'reg', 'inf',
-    // Office с поддержкой макросов
-    'docm', 'dotm', 'xlsm', 'xlsb', 'xltm', 'pptm', 'potm', 'ppam', 'ppsm',
-]);
-
 async function openAttachment(filePath) {
-    const ext = filePath.split('.').pop().toLowerCase();
-    if (DANGEROUS_EXTENSIONS.has(ext)) {
-        const filename = filePath.split(/[\\/]/).pop();
-        const ok = await window.__TAURI__.dialog.ask(
-            `Файл «${filename}» имеет расширение .${ext}, которое может быть опасным.\n\n` +
-            `Такие файлы часто используются для распространения вредоносного ПО.\n\n` +
-            `Открыть всё равно?`,
-            { title: 'Потенциально опасное вложение', type: 'warning' }
-        );
-        if (!ok) return;
-    }
+    const neutralize = localStorage.getItem('mail-attach-protect') !== 'false';
     try {
         const saveBase = localStorage.getItem('mail-attach-path') || null;
         const subfolder = currentFolder === 'Sent' ? 'Отправленные' : null;
-        const savedTo = await invoke('open_attachment', { filePath, saveBase, subfolder });
+        const savedTo = await invoke('open_attachment', { filePath, saveBase, subfolder, neutralize });
         showSavedToast(savedTo);
     } catch (e) {
         alert('Не удалось открыть файл: ' + e);

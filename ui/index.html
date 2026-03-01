@@ -609,6 +609,23 @@
                 <div class="settings-hint" style="margin-top:4px;">Используйте, если синхронизация пропускает новые письма. При следующей проверке будет корректно определён стартовый UID.</div>
             </div>
 
+            <!-- Безопасность -->
+            <div class="settings-section">
+                <div class="settings-section-title">Безопасность</div>
+                <div class="settings-row">
+                    <span class="settings-label">Защита от опасных вложений</span>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="settingsAttachProtect" checked>
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+                <div class="settings-hint" style="margin-top:4px;">
+                    При открытии опасных файлов (.exe, .lnk, .bat, .ps1, .iso и др.) расширение будет изменено:
+                    <b>invoice.exe → invoice._exe</b>. Файл сохранится, но Windows не запустит его случайно.
+                    Zip, rar, 7z не затрагиваются.
+                </div>
+            </div>
+
             <!-- Резервное копирование -->
             <div class="settings-section">
                 <div class="settings-section-title">Резервное копирование</div>
