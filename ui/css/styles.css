@@ -457,12 +457,40 @@ mark.search-hl {
     color: var(--text); font-family: inherit;
 }
 
-/* ── Compose ── */
+/* ── Модальные окна (безопасность, предупреждения) ── */
 .modal-overlay {
     position: fixed; inset: 0; background: rgba(0,0,0,0.5);
     display: flex; align-items: center; justify-content: center;
     padding: 20px; z-index: 1000;
 }
+.modal {
+    background: var(--bg2);
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+    width: 100%;
+    overflow: hidden;
+}
+.modal-header {
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--border);
+    font-size: 15px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.modal-body {
+    padding: 16px;
+}
+.modal-footer {
+    padding: 0 16px 14px;
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+}
+
+/* ── Compose ── */
 .compose-window {
     width: 680px; height: 620px; background: var(--bg2);
     border-radius: 12px; border: 1px solid var(--border);
@@ -678,6 +706,10 @@ mark.search-hl {
 }
 .attach-toast.error {
     background: #3a1a1a; border-color: #6a2d2d; color: #e07070;
+}
+.attach-toast.attach-toast-danger {
+    background: #ef4444; border-color: #dc2626; color: #fff;
+    font-weight: 600;
 }
 
 /* ── Контакты ── */

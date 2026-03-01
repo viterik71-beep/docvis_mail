@@ -478,17 +478,17 @@ function showLinkWarning(url) {
     const overlay = document.createElement('div');
     overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;padding:20px;z-index:99999';
     overlay.innerHTML = `
-      <div class="modal" style="max-width:500px;z-index:100000">
-        <div class="modal-header" style="color:${accentColor};gap:8px">
+      <div class="modal" style="max-width:500px">
+        <div class="modal-header" style="color:${accentColor}">
           <i class="fas fa-exclamation-triangle"></i> Вы покидаете почтовый клиент
         </div>
-        <div class="modal-body" style="font-size:13px;line-height:1.7;color:var(--text)">
+        <div class="modal-body" style="font-size:13px;line-height:1.7">
           <p style="margin:0 0 10px">Вы собираетесь перейти на внешний сайт. Сайт может содержать вредоносное содержимое. <b>Не переходите, если не уверены в отправителе.</b></p>
           <div style="font-size:11px;color:var(--text-secondary);margin-bottom:4px">Адрес назначения:</div>
           <div style="background:var(--bg-secondary);border:1px solid var(--border);border-radius:4px;padding:7px 10px;font-family:monospace;font-size:12px;word-break:break-all;max-height:72px;overflow-y:auto;user-select:all">${escHtml(displayUrl)}</div>
           ${hasDanger ? `<div style="margin-top:10px;padding:8px 10px;background:rgba(239,68,68,0.08);border-left:3px solid #ef4444;border-radius:2px;font-size:12px;color:#ef4444;line-height:1.8">${extraWarnings.map(w => '⚠ ' + escHtml(w)).join('<br>')}</div>` : ''}
         </div>
-        <div class="modal-footer" style="display:flex;gap:8px;justify-content:flex-end;padding-top:12px;border-top:1px solid var(--border);margin-top:4px">
+        <div class="modal-footer">
           <button class="ev-btn" id="_lnkOpen" style="background:${accentColor};color:#fff;order:2">
             <i class="fas fa-external-link-alt"></i> Перейти на сайт
           </button>
@@ -2376,15 +2376,14 @@ const SCANNABLE_ARCHIVE_EXT = new Set(['zip', '7z', 'rar']);
 function showSecurityConfirm(title, bodyLines, btnOkLabel) {
     return new Promise(resolve => {
         const overlay = document.createElement('div');
-        // Inline-стили гарантируют фон независимо от порядка загрузки CSS
         overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;padding:20px;z-index:99999';
         overlay.innerHTML = `
-          <div class="modal" style="max-width:460px;position:relative;z-index:100000">
+          <div class="modal" style="max-width:460px">
             <div class="modal-header" style="color:#ef4444">
               <i class="fas fa-shield-virus"></i> ${escHtml(title)}
             </div>
             <div class="modal-body" style="white-space:pre-wrap;font-size:13px;line-height:1.6">${escHtml(bodyLines)}</div>
-            <div class="modal-footer" style="display:flex;gap:8px;justify-content:flex-end;padding-top:12px">
+            <div class="modal-footer">
               <button class="ev-btn" id="_secCancel" style="background:var(--bg-secondary)">Отмена</button>
               <button class="ev-btn" id="_secOk" style="background:#ef4444;color:#fff">${escHtml(btnOkLabel)}</button>
             </div>
@@ -2399,9 +2398,9 @@ async function openAttachment(filePath, filename) {
     const protect = localStorage.getItem('mail-attach-protect') !== 'false';
     const ext = (filename?.split('.').pop() || '').toLowerCase();
 
-    // Опасный тип — уведомление (файл уже нейтрализован при автосохранении)
+    // Опасный тип — красное уведомление (файл уже нейтрализован при автосохранении)
     if (protect && DANGEROUS_ATTACH_EXT.has(ext)) {
-        showSavedToast(null, 'Опасный файл нейтрализован');
+        showSavedToast(null, '⚠ Опасный файл нейтрализован', true);
     }
 
     // Архив ZIP/7z/RAR — сканируем содержимое перед открытием
@@ -2447,7 +2446,7 @@ async function openAttachment(filePath, filename) {
     }
 }
 
-function showSavedToast(path, customMsg) {
+function showSavedToast(path, customMsg, danger) {
     // Показываем уведомление куда сохранился файл (или произвольный текст)
     let toast = document.getElementById('attachToast');
     if (!toast) {
@@ -2464,6 +2463,8 @@ function showSavedToast(path, customMsg) {
         const short = parts.slice(-4).join('/');
         toast.textContent = 'Сохранено: Почта/' + short;
     }
+    // Красный тост для опасных файлов
+    toast.classList.toggle('attach-toast-danger', !!danger);
     toast.classList.add('visible');
     clearTimeout(toast._timer);
     toast._timer = setTimeout(() => toast.classList.remove('visible'), 3000);
