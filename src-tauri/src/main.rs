@@ -2581,7 +2581,31 @@ fn open_attachment(
 
     let open_path = if let Some(ref sp) = saved {
         if std::path::Path::new(sp).exists() {
-            sp.clone()
+            // Файл уже сохранён. Если защита включена и имя опасное — переименовываем на месте.
+            // Это покрывает случай когда файл был сохранён до включения защиты.
+            if do_neutralize {
+                let sp_path = std::path::Path::new(sp.as_str());
+                let sp_name = sp_path.file_name()
+                    .unwrap_or_default().to_string_lossy().to_string();
+                if is_dangerous_attach_ext(&sp_name) {
+                    let new_name = neutralize_filename(&sp_name);
+                    let new_path = sp_path.parent()
+                        .unwrap_or(sp_path).join(&new_name);
+                    if std::fs::rename(sp_path, &new_path).is_ok() {
+                        let new_str = new_path.to_string_lossy().to_string();
+                        let conn = state.db.lock().unwrap();
+                        conn.execute("UPDATE attachments SET saved_path=?1 WHERE file_path=?2",
+                            params![new_str, file_path]).ok();
+                        new_str
+                    } else {
+                        sp.clone()
+                    }
+                } else {
+                    sp.clone()
+                }
+            } else {
+                sp.clone()
+            }
         } else {
             // Файл был перемещён/удалён — сохраняем заново
             let base = save_base.as_deref()
