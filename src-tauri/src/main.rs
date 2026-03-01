@@ -1803,8 +1803,23 @@ fn auto_save_attachments(
         for (att_id, file_path, filename) in rows {
             let src = std::path::Path::new(&file_path);
             if !src.exists() { continue; }
-            let dest_name = if do_neutralize && is_dangerous_attach_ext(&filename) {
-                neutralize_filename(&filename)
+            let dest_name = if do_neutralize {
+                if is_dangerous_attach_ext(&filename) {
+                    neutralize_filename(&filename)
+                } else {
+                    // Для ZIP/7z/RAR — проверяем содержимое на опасные файлы
+                    let ext = filename.rsplit('.').next().unwrap_or("").to_lowercase();
+                    if matches!(ext.as_str(), "zip" | "7z" | "rar") {
+                        let scan = scan_archive_by_ext(&file_path, &ext);
+                        if !scan.dangerous.is_empty() || scan.encrypted {
+                            neutralize_filename(&filename)
+                        } else {
+                            filename.clone()
+                        }
+                    } else {
+                        filename.clone()
+                    }
+                }
             } else {
                 filename.clone()
             };
@@ -2530,6 +2545,110 @@ fn neutralize_filename(name: &str) -> String {
     }
 }
 
+// ── Сканирование архивов ───────────────────────────────────────────────────
+
+#[derive(serde::Serialize, Clone, Default)]
+struct ArchiveScanResult {
+    /// Имена опасных файлов внутри архива
+    dangerous: Vec<String>,
+    /// Архив зашифрован — содержимое не проверено
+    encrypted: bool,
+    /// RAR, но UnRAR.exe не найден
+    no_tool: bool,
+}
+
+/// Взять только имя файла из пути внутри архива (a/b/c.exe → c.exe)
+fn archive_basename(name: &str) -> &str {
+    name.rsplit(['/', '\\']).next().unwrap_or(name)
+}
+
+fn scan_zip(path: &str) -> ArchiveScanResult {
+    let mut r = ArchiveScanResult::default();
+    let file = match std::fs::File::open(path) { Ok(f) => f, Err(_) => return r };
+    let mut archive = match zip::ZipArchive::new(file) {
+        Ok(a) => a,
+        Err(_) => { r.encrypted = true; return r; }
+    };
+    for i in 0..archive.len() {
+        match archive.by_index_raw(i) {
+            Ok(entry) => {
+                let name = entry.name().to_string();
+                let base = archive_basename(&name);
+                if !base.is_empty() && is_dangerous_attach_ext(base) {
+                    r.dangerous.push(name);
+                }
+            }
+            Err(_) => { r.encrypted = true; }
+        }
+    }
+    r
+}
+
+fn scan_7z(path: &str) -> ArchiveScanResult {
+    let mut r = ArchiveScanResult::default();
+    let file = match std::fs::File::open(path) { Ok(f) => f, Err(_) => return r };
+    let len = match file.metadata() { Ok(m) => m.len(), Err(_) => return r };
+    let archive = match sevenz_rust::Archive::read(
+        &mut std::io::BufReader::new(file), len, b""
+    ) {
+        Ok(a) => a,
+        Err(_) => { r.encrypted = true; return r; }
+    };
+    for f in archive.files.iter() {
+        let base = archive_basename(&f.name);
+        if !base.is_empty() && is_dangerous_attach_ext(base) {
+            r.dangerous.push(f.name.clone());
+        }
+    }
+    r
+}
+
+fn find_unrar_exe() -> Option<std::path::PathBuf> {
+    let candidates = [
+        r"C:\Program Files\WinRAR\UnRAR.exe",
+        r"C:\Program Files (x86)\WinRAR\UnRAR.exe",
+    ];
+    candidates.iter().map(std::path::Path::new)
+        .find(|p| p.exists()).map(|p| p.to_path_buf())
+}
+
+fn scan_rar(path: &str) -> ArchiveScanResult {
+    let mut r = ArchiveScanResult::default();
+    let unrar = match find_unrar_exe() {
+        Some(p) => p,
+        None => { r.no_tool = true; return r; }
+    };
+    // lb = list bare (только имена файлов), -p- = без пароля
+    let output = match std::process::Command::new(&unrar)
+        .args(["lb", "-p-", path]).output()
+    {
+        Ok(o) => o,
+        Err(_) => { r.no_tool = true; return r; }
+    };
+    if !output.status.success() {
+        r.encrypted = true;
+        return r;
+    }
+    for line in String::from_utf8_lossy(&output.stdout).lines() {
+        let line = line.trim();
+        if line.is_empty() { continue; }
+        let base = archive_basename(line);
+        if is_dangerous_attach_ext(base) {
+            r.dangerous.push(line.to_string());
+        }
+    }
+    r
+}
+
+fn scan_archive_by_ext(path: &str, ext: &str) -> ArchiveScanResult {
+    match ext {
+        "zip" => scan_zip(path),
+        "7z"  => scan_7z(path),
+        "rar" => scan_rar(path),
+        _     => ArchiveScanResult::default(),
+    }
+}
+
 fn build_attach_dest_dir(base: &std::path::Path, subfolder: Option<&str>) -> std::path::PathBuf {
     let now = chrono::Local::now();
     let month_ru = match now.month() {
@@ -2561,6 +2680,13 @@ fn get_default_attach_path() -> String {
     let desktop = dirs_next::desktop_dir()
         .unwrap_or_else(|| std::path::PathBuf::from("."));
     desktop.join("Почта").to_string_lossy().to_string()
+}
+
+#[tauri::command]
+fn scan_archive(file_path: String) -> ArchiveScanResult {
+    let ext = std::path::Path::new(&file_path)
+        .extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+    scan_archive_by_ext(&file_path, &ext)
 }
 
 #[tauri::command]
@@ -3390,6 +3516,7 @@ fn main() {
             get_backups_dir_path,
             open_backups_folder,
             restart_app,
+            scan_archive,
         ])
         .run(tauri::generate_context!())
         .expect("error while running application");

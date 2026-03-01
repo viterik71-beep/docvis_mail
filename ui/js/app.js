@@ -2316,20 +2316,44 @@ const DANGEROUS_ATTACH_EXT = new Set([
     'iso','img','cab','arj','ace','lzh','lha',
     'jar','lz','tar','uue','xz','z','zipx','001','bz2','gz',
 ]);
+const SCANNABLE_ARCHIVE_EXT = new Set(['zip', '7z', 'rar']);
 
 async function openAttachment(filePath, filename) {
     const protect = localStorage.getItem('mail-attach-protect') !== 'false';
-    if (protect && filename) {
-        const ext = filename.includes('.') ? filename.split('.').pop().toLowerCase() : '';
-        if (DANGEROUS_ATTACH_EXT.has(ext)) {
-            showSavedToast(null, 'Опасный файл нейтрализован');
-        }
+    const ext = (filename?.split('.').pop() || '').toLowerCase();
+
+    // Опасный тип — уведомление (файл уже нейтрализован при автосохранении)
+    if (protect && DANGEROUS_ATTACH_EXT.has(ext)) {
+        showSavedToast(null, 'Опасный файл нейтрализован');
     }
+
+    // Архив ZIP/7z/RAR — сканируем содержимое перед открытием
+    if (protect && SCANNABLE_ARCHIVE_EXT.has(ext)) {
+        try {
+            const scan = await invoke('scan_archive', { filePath });
+            if (scan.dangerous.length > 0) {
+                const list = scan.dangerous.slice(0, 6).join('\n');
+                const more = scan.dangerous.length > 6 ? `\n...и ещё ${scan.dangerous.length - 6}` : '';
+                const ok = confirm(
+                    `⚠ Архив содержит опасные файлы:\n\n${list}${more}\n\nАрхив нейтрализован (переименован).\nВсё равно открыть папку?`
+                );
+                if (!ok) return;
+            } else if (scan.encrypted) {
+                const ok = confirm(
+                    '⚠ Архив зашифрован — содержимое не проверено.\n\nОткрывайте только если доверяете отправителю.\nПродолжить?'
+                );
+                if (!ok) return;
+            } else if (scan.no_tool) {
+                showSavedToast(null, 'RAR: WinRAR не найден, проверка пропущена');
+            }
+        } catch (_) { /* сканирование не критично */ }
+    }
+
     try {
         const saveBase = localStorage.getItem('mail-attach-path') || null;
         const subfolder = currentFolder === 'Sent' ? 'Отправленные' : null;
         const savedTo = await invoke('open_attachment', { filePath, saveBase, subfolder });
-        if (!protect || !filename || !DANGEROUS_ATTACH_EXT.has((filename.split('.').pop() || '').toLowerCase())) {
+        if (!protect || !DANGEROUS_ATTACH_EXT.has(ext)) {
             showSavedToast(savedTo);
         }
     } catch (e) {
