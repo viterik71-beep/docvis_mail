@@ -2487,8 +2487,9 @@ const DANGEROUS_ATTACH_EXT: &[&str] = &[
     "reg","inf",
     // Office с макросами
     "docm","dotm","xlsm","xlsb","xltm","pptm","potm","ppam","ppsm",
-    // Нестандартные/опасные архивы (iso монтируется и может autorun, cab устанавливает ПО)
+    // Архивы — опасные или редкие (zip/rar/7z оставлены без изменений)
     "iso","img","cab","arj","ace","lzh","lha",
+    "jar","lz","tar","uue","xz","z","zipx","001","bz2","gz",
 ];
 
 fn is_dangerous_attach_ext(filename: &str) -> bool {
