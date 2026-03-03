@@ -97,7 +97,7 @@
 | PowerShell | `.ps1` `.ps2` `.psm1` `.psd1` `.ps1xml` `.ps2xml` `.psc1` `.psc2` |
 | Скрипты Windows | `.vbs` `.vbe` `.vb` `.vbp` `.js` `.jse` `.wsf` `.wsh` `.ws` `.wsc` `.sct` `.shb` `.shs` |
 | Скрипты общие | `.py` `.rb` `.pl` `.php` |
-| Ссылки и веб | `.lnk` `.url` `.hta` `.website` `.mht` `.mhtml` `.xhtml` |
+| Ссылки и веб | `.lnk` `.url` `.hta` `.website` `.mht` `.mhtml` `.xhtml` `.shtml` `.shtm` *(SSI — браузер выполняет как HTML+JS, в почте нет легитимного использования)* |
 | Реестр | `.reg` `.inf` |
 | OneNote | `.one` `.onepkg` *(массовый вектор атак с 2023 г.)* |
 | SVG | `.svg` *(может содержать JavaScript)* |

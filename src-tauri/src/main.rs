@@ -2638,7 +2638,8 @@ const DANGEROUS_ATTACH_EXT: &[&str] = &[
     // Скрипты общие (если интерпретатор установлен)
     "py","rb","pl","php",
     // HTML-приложения, ярлыки, веб-архивы, HTML-smuggling векторы
-    "hta","lnk","url","website","mht","mhtml","xhtml",
+    // shtml/shtm — SSI-файлы, браузер открывает как HTML и выполняет JS; в почте не бывают легитимно
+    "hta","lnk","url","website","mht","mhtml","xhtml","shtml","shtm",
     // Реестр и автозапуск
     "reg","inf",
     // OneNote — массовый вектор атак 2023-2025 (встраивает vbs/exe внутрь)
