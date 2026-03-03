@@ -88,20 +88,20 @@
 - **Сканирование архивов** (ZIP, 7z, RAR) без распаковки: если внутри обнаружены опасные файлы — архив нейтрализуется; зашифрованные архивы (содержимое не проверяемо) также помечаются как потенциально опасные; RAR сканируется через UnRAR.exe (при наличии WinRAR)
 
 <details>
-<summary>Полный список нейтрализуемых расширений (55+)</summary>
+<summary>Полный список нейтрализуемых расширений (80+)</summary>
 
 | Категория | Расширения |
 |---|---|
-| Исполняемые | `.exe` `.msi` `.msp` `.mst` `.com` `.scr` `.pif` `.dll` `.cpl` `.ocx` `.msc` `.xbap` `.appref-ms` `.application` |
+| Исполняемые и системные | `.exe` `.msi` `.msp` `.mst` `.com` `.scr` `.pif` `.dll` `.cpl` `.ocx` `.msc` `.xbap` `.appref-ms` `.application` `.sys` `.drv` `.efi` |
 | Командная строка | `.bat` `.cmd` |
 | PowerShell | `.ps1` `.ps2` `.psm1` `.psd1` `.ps1xml` `.ps2xml` `.psc1` `.psc2` |
 | Скрипты Windows | `.vbs` `.vbe` `.vb` `.vbp` `.js` `.jse` `.wsf` `.wsh` `.ws` `.wsc` `.sct` `.shb` `.shs` |
 | Скрипты общие | `.py` `.rb` `.pl` `.php` |
-| Ссылки и веб | `.lnk` `.url` `.hta` `.website` `.mht` `.mhtml` |
+| Ссылки и веб | `.lnk` `.url` `.hta` `.website` `.mht` `.mhtml` `.xhtml` |
 | Реестр | `.reg` `.inf` |
 | OneNote | `.one` `.onepkg` *(массовый вектор атак с 2023 г.)* |
 | SVG | `.svg` *(может содержать JavaScript)* |
-| Виртуальные диски | `.vhd` `.vhdx` *(обход Mark-of-the-Web)* |
+| Виртуальные диски и образы | `.vhd` `.vhdx` `.wim` `.esd` *(обход Mark-of-the-Web)* |
 | Windows-специфичные | `.chm` `.hlp` `.gadget` `.scf` `.ani` `.diagcab` `.diagpkg` `.settingcontent-ms` `.theme` `.themepack` `.search-ms` `.searchconnector-ms` `.library-ms` |
 | Windows App пакеты | `.appx` `.msix` `.appxbundle` `.msixbundle` *(сайдлоад, обход Defender)* |
 | Сертификаты с ключами | `.pfx` `.p12` *(контейнеры с приватными ключами — «обновите сертификат безопасности»)* |
@@ -110,7 +110,7 @@
 | Office bypass (без макросов) | `.slk` *(SYLK, обход Protected View)* `.iqy` `.dqy` `.oqy` `.rqy` *(Web Query — внешний код без макросов)* `.udl` *(Universal Data Link)* `.bas` *(VBA-модуль)* |
 | Office с макросами | `.docm` `.dotm` `.xlsm` `.xlsb` `.xltm` `.xlam` `.xll` `.pptm` `.potm` `.ppam` `.ppsm` `.sldm` `.pub` `.pubm` `.wll` |
 | LibreOffice шаблоны и редкие форматы | `.ott` `.ots` `.otp` `.otg` *(шаблоны с макросами, аналог dotm/xltm/potm)* `.odg` `.odb` *(в почте не встречаются легитимно)* |
-| Опасные архивы | `.iso` `.img` `.cab` `.arj` `.ace` `.lzh` `.lha` `.lz` `.tar` `.uue` `.xz` `.z` `.zipx` `.bz2` `.gz` |
+| Опасные архивы | `.iso` `.img` `.cab` `.arj` `.ace` `.lzh` `.lha` `.lz` `.tar` `.uue` `.xz` `.z` `.zipx` `.bz2` `.gz` `.cpio` `.zst` `.lzma` |
 
 </details>
 

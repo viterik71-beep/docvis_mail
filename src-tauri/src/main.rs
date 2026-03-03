@@ -2628,24 +2628,25 @@ fn read_attachment_b64(file_path: String) -> Result<serde_json::Value, String> {
 /// Расширения файлов, опасных при открытии пользователем.
 /// zip/rar/7z — стандартные архивы, остаются без изменений.
 const DANGEROUS_ATTACH_EXT: &[&str] = &[
-    // Исполняемые
+    // Исполняемые и системные (sys/drv в почте = таргетированная атака; efi = UEFI-payload уровня APT)
     "exe","msi","msp","mst","com","scr","pif","dll","cpl","ocx","msc","application","xbap","appref-ms",
+    "sys","drv","efi",
     // Скрипты командной строки
     "bat","cmd","ps1","psm1","psd1","ps2","ps1xml","ps2xml","psc1","psc2",
     // Скрипты Windows / интерпретируемые
     "vbs","vbe","vb","vbp","jse","js","wsf","wsh","ws","wsc","sct","shb","shs",
     // Скрипты общие (если интерпретатор установлен)
     "py","rb","pl","php",
-    // HTML-приложения, ярлыки, веб-архивы
-    "hta","lnk","url","website","mht","mhtml",
+    // HTML-приложения, ярлыки, веб-архивы, HTML-smuggling векторы
+    "hta","lnk","url","website","mht","mhtml","xhtml",
     // Реестр и автозапуск
     "reg","inf",
     // OneNote — массовый вектор атак 2023-2025 (встраивает vbs/exe внутрь)
     "one","onepkg",
     // SVG — может содержать JS, активно используется в фишинге 2024
     "svg",
-    // Виртуальные диски — обход Mark-of-the-Web (MOTW)
-    "vhd","vhdx",
+    // Виртуальные диски и образы — обход Mark-of-the-Web (MOTW)
+    "vhd","vhdx","wim","esd",
     // Windows-специфичные векторы атак
     "chm","hlp","gadget","scf","ani",
     "diagcab","diagpkg","settingcontent-ms","theme","themepack",
@@ -2672,6 +2673,7 @@ const DANGEROUS_ATTACH_EXT: &[&str] = &[
     // Архивы — опасные или редкие (zip/rar/7z оставлены без изменений)
     "iso","img","cab","arj","ace","lzh","lha",
     "lz","tar","uue","xz","z","zipx","001","bz2","gz",
+    "cpio","zst","lzma",
 ];
 
 fn is_dangerous_attach_ext(filename: &str) -> bool {
