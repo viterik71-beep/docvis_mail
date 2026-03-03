@@ -92,7 +92,8 @@
 
 | Категория | Расширения |
 |---|---|
-| Исполняемые | `.exe` `.msi` `.msp` `.mst` `.com` `.scr` `.pif` `.dll` `.cpl` `.ocx` `.msc` `.xbap` `.appref-ms` |
+| Исполняемые | `.exe` `.msi` `.msp` `.mst` `.com` `.scr` `.pif` `.dll` `.cpl` `.ocx` `.msc` `.xbap` `.appref-ms` `.application` |
+| Командная строка | `.bat` `.cmd` |
 | PowerShell | `.ps1` `.ps2` `.psm1` `.psd1` `.ps1xml` `.ps2xml` `.psc1` `.psc2` |
 | Скрипты Windows | `.vbs` `.vbe` `.vb` `.vbp` `.js` `.jse` `.wsf` `.wsh` `.ws` `.wsc` `.sct` `.shb` `.shs` |
 | Скрипты общие | `.py` `.rb` `.pl` `.php` |
@@ -103,7 +104,7 @@
 | Виртуальные диски | `.vhd` `.vhdx` *(обход Mark-of-the-Web)* |
 | Windows-специфичные | `.chm` `.hlp` `.gadget` `.scf` `.diagcab` `.diagpkg` `.settingcontent-ms` `.theme` `.themepack` `.search-ms` `.searchconnector-ms` `.library-ms` |
 | Сертификаты с ключами | `.pfx` `.p12` *(контейнеры с приватными ключами — «обновите сертификат безопасности»)* |
-| Java | `.jnlp` `.class` |
+| Java | `.jar` `.jnlp` `.class` |
 | Access | `.ade` `.adp` `.mda` `.mdb` `.mde` `.mdt` `.mdw` `.mdz` `.accdb` `.accde` `.accdr` `.accdt` |
 | Office с макросами | `.docm` `.dotm` `.xlsm` `.xlsb` `.xltm` `.xlam` `.xll` `.pptm` `.potm` `.ppam` `.ppsm` `.sldm` `.pub` `.pubm` `.wll` |
 | LibreOffice шаблоны и редкие форматы | `.ott` `.ots` `.otp` `.otg` *(шаблоны с макросами, аналог dotm/xltm/potm)* `.odg` `.odb` *(в почте не встречаются легитимно)* |
