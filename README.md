@@ -101,9 +101,10 @@
 | OneNote | `.one` `.onepkg` *(массовый вектор атак с 2023 г.)* |
 | SVG | `.svg` *(может содержать JavaScript)* |
 | Виртуальные диски | `.vhd` `.vhdx` *(обход Mark-of-the-Web)* |
-| Windows-специфичные | `.chm` `.hlp` `.gadget` `.scf` `.diagcab` `.diagpkg` `.settingcontent-ms` `.theme` `.themepack` `.search-ms` `.searchconnector-ms` |
+| Windows-специфичные | `.chm` `.hlp` `.gadget` `.scf` `.diagcab` `.diagpkg` `.settingcontent-ms` `.theme` `.themepack` `.search-ms` `.searchconnector-ms` `.library-ms` |
+| Сертификаты с ключами | `.pfx` `.p12` *(контейнеры с приватными ключами — «обновите сертификат безопасности»)* |
 | Java | `.jnlp` `.class` |
-| Access | `.ade` `.adp` `.mda` `.mdb` `.mde` `.mdt` `.mdw` `.mdz` |
+| Access | `.ade` `.adp` `.mda` `.mdb` `.mde` `.mdt` `.mdw` `.mdz` `.accdb` `.accde` `.accdr` `.accdt` |
 | Office с макросами | `.docm` `.dotm` `.xlsm` `.xlsb` `.xltm` `.xlam` `.xll` `.pptm` `.potm` `.ppam` `.ppsm` `.sldm` `.pub` `.pubm` `.wll` |
 | LibreOffice шаблоны и редкие форматы | `.ott` `.ots` `.otp` `.otg` *(шаблоны с макросами, аналог dotm/xltm/potm)* `.odg` `.odb` *(в почте не встречаются легитимно)* |
 | Опасные архивы | `.iso` `.img` `.cab` `.arj` `.ace` `.lzh` `.lha` `.lz` `.tar` `.uue` `.xz` `.z` `.zipx` `.bz2` `.gz` |

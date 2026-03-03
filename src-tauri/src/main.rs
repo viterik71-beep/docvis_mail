@@ -2649,11 +2649,14 @@ const DANGEROUS_ATTACH_EXT: &[&str] = &[
     // Windows-специфичные векторы атак
     "chm","hlp","gadget","scf",
     "diagcab","diagpkg","settingcontent-ms","theme","themepack",
-    "search-ms","searchconnector-ms",
+    "search-ms","searchconnector-ms","library-ms",
+    // Контейнеры с приватными ключами — социальная инженерия ("обновите сертификат")
+    "pfx","p12",
     // Java
     "jar","jnlp","class",
-    // Access (макросы и проекты)
+    // Access (макросы и проекты) — старые и новые форматы
     "ade","adp","mda","mdb","mde","mdt","mdw","mdz",
+    "accdb","accde","accdr","accdt",
     // Office с макросами
     "docm","dotm","xlsm","xlsb","xltm","xlam","xll","pptm","potm","ppam","ppsm","sldm",
     "pub","pubm","wll",
