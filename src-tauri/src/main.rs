@@ -2647,9 +2647,11 @@ const DANGEROUS_ATTACH_EXT: &[&str] = &[
     // Виртуальные диски — обход Mark-of-the-Web (MOTW)
     "vhd","vhdx",
     // Windows-специфичные векторы атак
-    "chm","hlp","gadget","scf",
+    "chm","hlp","gadget","scf","ani",
     "diagcab","diagpkg","settingcontent-ms","theme","themepack",
     "search-ms","searchconnector-ms","library-ms",
+    // Windows App пакеты — сайдлоад, активно используются для обхода Defender
+    "appx","msix","appxbundle","msixbundle",
     // Контейнеры с приватными ключами — социальная инженерия ("обновите сертификат")
     "pfx","p12",
     // Java
@@ -2657,6 +2659,11 @@ const DANGEROUS_ATTACH_EXT: &[&str] = &[
     // Access (макросы и проекты) — старые и новые форматы
     "ade","adp","mda","mdb","mde","mdt","mdw","mdz",
     "accdb","accde","accdr","accdt",
+    // Office bypass-форматы (без макросов, но выполняют внешний код)
+    // SLK обходит Protected View; IQY/DQY/OQY/RQY — Web Query, запрос к внешнему URL; UDL — подключение к БД
+    "slk","iqy","dqy","oqy","rqy","udl",
+    // VBA-модули
+    "bas",
     // Office с макросами
     "docm","dotm","xlsm","xlsb","xltm","xlam","xll","pptm","potm","ppam","ppsm","sldm",
     "pub","pubm","wll",
