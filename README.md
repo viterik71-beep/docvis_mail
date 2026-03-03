@@ -105,7 +105,6 @@
 | Java | `.jnlp` `.class` |
 | Access | `.ade` `.adp` `.mda` `.mdb` `.mde` `.mdt` `.mdw` `.mdz` |
 | Office с макросами | `.docm` `.dotm` `.xlsm` `.xlsb` `.xltm` `.xlam` `.xll` `.pptm` `.potm` `.ppam` `.ppsm` `.sldm` `.pub` `.pubm` `.wll` |
-| LibreOffice / OpenOffice | `.odt` `.ods` `.odp` `.odg` `.odb` `.ott` `.ots` `.otp` `.otg` *(макросы в обычных форматах; используются для обхода AV — CVE-2025-1080)* |
 | Опасные архивы | `.iso` `.img` `.cab` `.arj` `.ace` `.lzh` `.lha` `.lz` `.tar` `.uue` `.xz` `.z` `.zipx` `.bz2` `.gz` |
 
 </details>

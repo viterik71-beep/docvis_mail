@@ -2657,9 +2657,6 @@ const DANGEROUS_ATTACH_EXT: &[&str] = &[
     // Office с макросами
     "docm","dotm","xlsm","xlsb","xltm","xlam","xll","pptm","potm","ppam","ppsm","sldm",
     "pub","pubm","wll",
-    // LibreOffice / OpenOffice — макросы встраиваются в обычные форматы (CVE-2025-1080, CVE-2018-16858)
-    // хакеры используют ODF специально для обхода AV, заточенных под MS Office
-    "odt","ods","odp","odg","odb","ott","ots","otp","otg",
     // Архивы — опасные или редкие (zip/rar/7z оставлены без изменений)
     "iso","img","cab","arj","ace","lzh","lha",
     "lz","tar","uue","xz","z","zipx","001","bz2","gz",
