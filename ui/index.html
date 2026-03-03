@@ -13,7 +13,7 @@
 <!-- ─── Экран добавления аккаунта ─── -->
 <div id="setupScreen" class="setup-screen" style="display:none;">
     <div class="setup-card">
-        <div class="setup-logo"><i class="fas fa-envelope"></i></div>
+        <div class="setup-logo"><img src="favicon.png" alt="ДокВис Почта"></div>
         <h2>ДокВис Почта</h2>
         <p class="setup-subtitle">Добавьте почтовый аккаунт</p>
 
@@ -62,6 +62,27 @@
                 <div class="form-row">
                     <label>SMTP порт</label>
                     <input type="number" id="setupSmtpPort" value="465">
+                </div>
+            </details>
+            <details class="advanced-details">
+                <summary>Удаление писем с сервера</summary>
+                <div class="form-row">
+                    <label>Удалять через</label>
+                    <select id="setupDeleteAfterDays" style="flex:1;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:14px;">
+                        <option value="">Никогда</option>
+                        <option value="3">3 дня</option>
+                        <option value="7">7 дней</option>
+                        <option value="14">14 дней</option>
+                        <option value="30">30 дней</option>
+                        <option value="60">60 дней</option>
+                    </select>
+                </div>
+                <div class="form-row">
+                    <label>Действие</label>
+                    <select id="setupDeletePermanent" style="flex:1;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:14px;">
+                        <option value="0">Переместить в корзину</option>
+                        <option value="1">Удалить навсегда</option>
+                    </select>
                 </div>
             </details>
             <div id="setupError" class="setup-error" style="display:none;"></div>
@@ -129,9 +150,15 @@
             </div>
             <div class="folder-item" data-folder="Spam" onclick="selectFolder('Spam')">
                 <i class="fas fa-ban"></i> Спам
+                <button class="folder-clear-btn" onclick="event.stopPropagation(); clearSpam()" title="Очистить спам">
+                    <i class="fas fa-broom"></i>
+                </button>
             </div>
             <div class="folder-item" data-folder="Trash" onclick="selectFolder('Trash')">
                 <i class="fas fa-trash"></i> Корзина
+                <button class="folder-clear-btn" onclick="event.stopPropagation(); clearTrash()" title="Очистить корзину">
+                    <i class="fas fa-broom"></i>
+                </button>
             </div>
 
             <!-- Пользовательские папки -->
@@ -180,6 +207,8 @@
         </div>
     </div>
 
+    <div class="panel-resizer" id="resizerSidebar"></div>
+
     <!-- Список писем -->
     <div class="email-list-panel">
         <div class="email-list-header">
@@ -187,9 +216,6 @@
             <div class="email-list-actions">
                 <button class="icon-btn" onclick="syncCurrentFolder()" title="Обновить">
                     <i class="fas fa-sync" id="syncIcon"></i>
-                </button>
-                <button class="icon-btn danger-icon" id="clearTrashBtn" onclick="clearTrash()" title="Очистить корзину" style="display:none;">
-                    <i class="fas fa-trash-alt"></i>
                 </button>
                 <input type="text" id="searchInput" class="search-input" placeholder="Поиск..." oninput="filterEmails(this.value)">
             </div>
@@ -244,6 +270,8 @@
         </div>
     </div>
 
+    <div class="panel-resizer" id="resizerEmailList"></div>
+
     <!-- Просмотр письма -->
     <div class="email-view-panel" id="emailViewPanel">
         <div class="empty-state large"><i class="fas fa-envelope-open-text"></i><p>Выберите письмо</p></div>
@@ -297,9 +325,12 @@
             </div>
             <div class="contacts-groups-bar" id="groupChipsBar"></div>
             <div class="contacts-select-bar" id="contactsSelectBar">
-                <span class="sel-count" id="contactsSelCount">0 выбрано</span>
+                <span class="sel-count" id="contactsSelCount">0</span>
                 <button class="ev-btn" style="font-size:12px;padding:4px 10px;" onclick="composeToSelectedContacts()">
                     <i class="fas fa-pen"></i> Написать
+                </button>
+                <button class="icon-btn" style="color:#dc3545;" onclick="deleteSelectedContacts()" title="Удалить выбранные">
+                    <i class="fas fa-trash"></i>
                 </button>
                 <div class="group-assign-wrap">
                     <button class="ev-btn" style="font-size:12px;padding:4px 10px;" onclick="toggleGroupAssignDropdown()">
@@ -340,7 +371,8 @@
                 <div class="addr-input-wrap">
                     <input type="text" id="composeTo" placeholder="email@example.com"
                            oninput="onAddrInput('composeTo','toDropdown',this.value)"
-                           onkeydown="onAddrKeydown(event,'toDropdown')">
+                           onkeydown="onAddrKeydown(event,'toDropdown')"
+                           ondragover="event.preventDefault()" ondrop="event.preventDefault()">
                     <div class="contacts-dropdown" id="toDropdown" style="display:none;"></div>
                 </div>
                 <button class="icon-btn addr-book-btn" onclick="openAddrPicker('composeTo')" title="Выбрать из контактов">
@@ -352,7 +384,8 @@
                 <div class="addr-input-wrap">
                     <input type="text" id="composeCc" placeholder=""
                            oninput="onAddrInput('composeCc','ccDropdown',this.value)"
-                           onkeydown="onAddrKeydown(event,'ccDropdown')">
+                           onkeydown="onAddrKeydown(event,'ccDropdown')"
+                           ondragover="event.preventDefault()" ondrop="event.preventDefault()">
                     <div class="contacts-dropdown" id="ccDropdown" style="display:none;"></div>
                 </div>
                 <button class="icon-btn addr-book-btn" onclick="openAddrPicker('composeCc')" title="Выбрать из контактов">
@@ -361,7 +394,8 @@
             </div>
             <div class="compose-row">
                 <label>Тема</label>
-                <input type="text" id="composeSubject" placeholder="Тема письма">
+                <input type="text" id="composeSubject" placeholder="Тема письма"
+                       ondragover="event.preventDefault()" ondrop="event.preventDefault()">
             </div>
             <!-- Зона прикрепления файлов -->
             <div class="compose-attach-zone" onclick="document.getElementById('composeFileInput').click()">
@@ -376,6 +410,50 @@
                     <i class="fas fa-image"></i> Показать
                 </button>
             </div>
+            <div class="compose-toolbar">
+                <!-- Размер шрифта -->
+                <select class="toolbar-select" onchange="composeFontSize(this.value); this.value=''" title="Размер шрифта">
+                    <option value="">px</option>
+                    <option value="10px">10</option>
+                    <option value="12px">12</option>
+                    <option value="14px">14</option>
+                    <option value="16px">16</option>
+                    <option value="18px">18</option>
+                    <option value="20px">20</option>
+                    <option value="24px">24</option>
+                    <option value="28px">28</option>
+                </select>
+                <div class="toolbar-divider"></div>
+                <!-- Форматирование -->
+                <button type="button" class="toolbar-btn" onmousedown="event.preventDefault()" onclick="document.execCommand('bold')" title="Жирный (Ctrl+B)"><i class="fas fa-bold"></i></button>
+                <button type="button" class="toolbar-btn" onmousedown="event.preventDefault()" onclick="document.execCommand('italic')" title="Курсив (Ctrl+I)"><i class="fas fa-italic"></i></button>
+                <button type="button" class="toolbar-btn" onmousedown="event.preventDefault()" onclick="document.execCommand('underline')" title="Подчёркивание (Ctrl+U)"><i class="fas fa-underline"></i></button>
+                <button type="button" class="toolbar-btn" onmousedown="event.preventDefault()" onclick="document.execCommand('strikeThrough')" title="Зачёркнутый"><i class="fas fa-strikethrough"></i></button>
+                <button type="button" class="toolbar-btn" onmousedown="event.preventDefault()" onclick="document.execCommand('removeFormat')" title="Убрать форматирование"><i class="fas fa-eraser"></i></button>
+                <div class="toolbar-divider"></div>
+                <!-- Цвет текста -->
+                <label class="toolbar-btn toolbar-color-label" title="Цвет текста" onmousedown="composeColorSaveSelection()">
+                    <i class="fas fa-palette"></i>
+                    <input type="color" id="toolbarColorInput" oninput="composeApplyColor(this.value)" onchange="composeApplyColor(this.value)" style="position:absolute;opacity:0;width:0;height:0;">
+                </label>
+                <div class="toolbar-divider"></div>
+                <!-- Выравнивание -->
+                <button type="button" class="toolbar-btn" onmousedown="event.preventDefault()" onclick="document.execCommand('justifyLeft')" title="По левому краю"><i class="fas fa-align-left"></i></button>
+                <button type="button" class="toolbar-btn" onmousedown="event.preventDefault()" onclick="document.execCommand('justifyCenter')" title="По центру"><i class="fas fa-align-center"></i></button>
+                <button type="button" class="toolbar-btn" onmousedown="event.preventDefault()" onclick="document.execCommand('justifyRight')" title="По правому краю"><i class="fas fa-align-right"></i></button>
+                <div class="toolbar-divider"></div>
+                <!-- Списки -->
+                <button type="button" class="toolbar-btn" onmousedown="event.preventDefault()" onclick="document.execCommand('insertUnorderedList')" title="Маркированный список"><i class="fas fa-list-ul"></i></button>
+                <button type="button" class="toolbar-btn" onmousedown="event.preventDefault()" onclick="document.execCommand('insertOrderedList')" title="Нумерованный список"><i class="fas fa-list-ol"></i></button>
+                <div class="toolbar-divider"></div>
+                <!-- Ссылка и очистка -->
+                <button type="button" class="toolbar-btn" onclick="composeInsertLink()" title="Вставить ссылку"><i class="fas fa-link"></i></button>
+                <button type="button" class="toolbar-btn" onmousedown="event.preventDefault()" onclick="document.execCommand('unlink')" title="Удалить ссылку"><i class="fas fa-unlink"></i></button>
+                <div class="toolbar-divider"></div>
+                <!-- Смайлики -->
+                <button type="button" class="toolbar-btn" id="emojiPickerBtn" onmousedown="event.preventDefault()" onclick="toggleEmojiPicker(this)" title="Смайлики">😊</button>
+            </div>
+            <div id="emojiPickerPanel" class="emoji-picker" style="display:none;"></div>
             <div id="composeBody" class="compose-textarea" contenteditable="true" data-placeholder="Текст письма..."></div>
         </div>
         <div class="compose-footer">
@@ -523,16 +601,6 @@
                 </div>
             </div>
 
-            <!-- Подпись -->
-            <div class="settings-section">
-                <div class="settings-section-title">Подпись</div>
-                <div class="settings-row col">
-                    <span class="settings-label">Добавляется к каждому новому письму</span>
-                    <textarea id="settingsSignature" class="settings-signature"
-                              placeholder="С уважением, Иван Иванов"></textarea>
-                </div>
-            </div>
-
             <!-- Синхронизация -->
             <div class="settings-section">
                 <div class="settings-section-title">Синхронизация</div>
@@ -575,14 +643,6 @@
                         <span class="toggle-slider"></span>
                     </label>
                 </div>
-                <div class="settings-row" style="margin-top:8px;">
-                    <span class="settings-label">Оставлять письма на сервере</span>
-                    <label class="toggle-switch">
-                        <input type="checkbox" id="settingsLeaveOnServer" checked>
-                        <span class="toggle-slider"></span>
-                    </label>
-                </div>
-                <div class="settings-hint" style="margin-top:4px;">Если выключено — после загрузки письма удаляются с IMAP-сервера.</div>
                 <div class="settings-row" style="margin-top:8px;">
                     <span class="settings-label">Полная синхронизация <span class="settings-hint" style="display:inline">(все письма с сервера)</span></span>
                     <div style="display:flex;gap:6px;">
@@ -736,6 +796,32 @@
                     <input type="number" id="editSmtpPort">
                 </div>
             </details>
+            <details class="advanced-details">
+                <summary>Удаление писем с сервера</summary>
+                <div class="form-row">
+                    <label>Удалять через</label>
+                    <select id="editDeleteAfterDays" style="flex:1;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:14px;">
+                        <option value="">Никогда</option>
+                        <option value="3">3 дня</option>
+                        <option value="7">7 дней</option>
+                        <option value="14">14 дней</option>
+                        <option value="30">30 дней</option>
+                        <option value="60">60 дней</option>
+                    </select>
+                </div>
+                <div class="form-row">
+                    <label>Действие</label>
+                    <select id="editDeletePermanent" style="flex:1;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:14px;">
+                        <option value="0">Переместить в корзину</option>
+                        <option value="1">Удалить навсегда</option>
+                    </select>
+                </div>
+            </details>
+            <div class="form-row col">
+                <label>Подпись</label>
+                <textarea id="editAccountSignature" class="settings-signature"
+                          placeholder="С уважением, Иван Иванов" rows="3"></textarea>
+            </div>
             <div id="editAccountError" class="setup-error" style="display:none;"></div>
             <button class="btn-primary" onclick="saveEditAccount()" id="editAccountSaveBtn">
                 <i class="fas fa-save"></i> Сохранить

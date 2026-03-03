@@ -70,7 +70,7 @@ async function syncAllAccountsBackground() {
     const notifEnabled = localStorage.getItem('mail-notifications') !== 'false';
     const notifDuration = parseInt(localStorage.getItem('mail-notif-duration') || '5');
     const saveBase = localStorage.getItem('mail-attach-path') || '';
-    const leaveOnServer = localStorage.getItem('mail-leave-on-server') !== 'false';
+    const leaveOnServer = true;
     sbStatus('syncing', 'Автопроверка...');
     let totalNew = 0;
     for (const a of accounts) {
@@ -128,7 +128,7 @@ async function startFullSync() {
     bar.style.width = '0%';
     status.textContent = 'Подключение...';
 
-    const leaveOnServer = localStorage.getItem('mail-leave-on-server') !== 'false';
+    const leaveOnServer = true;
     const saveBase = localStorage.getItem('mail-attach-path') || '';
 
     // Подписываемся на прогресс
@@ -199,15 +199,9 @@ async function openSettings() {
     const theme = localStorage.getItem('mail-theme') || 'light';
     applyTheme(theme);
 
-    // Подпись
-    document.getElementById('settingsSignature').value =
-        localStorage.getItem('mail-signature') || '';
-
     // Таймер
     const interval = localStorage.getItem('mail-autosync') ?? '5';
     document.getElementById('settingsAutoSync').value = interval;
-    document.getElementById('settingsLeaveOnServer').checked =
-        localStorage.getItem('mail-leave-on-server') !== 'false';
 
     // Защита от опасных вложений
     document.getElementById('settingsAttachProtect').checked =
@@ -385,17 +379,12 @@ function saveSettings() {
         localStorage.removeItem('mail-attach-path');
     }
 
-    // Подпись
-    localStorage.setItem('mail-signature', document.getElementById('settingsSignature').value);
 
     // Таймер
     const interval = document.getElementById('settingsAutoSync').value;
     localStorage.setItem('mail-autosync', interval);
     applyAutoSync(interval);
 
-    // Оставлять на сервере
-    localStorage.setItem('mail-leave-on-server',
-        document.getElementById('settingsLeaveOnServer').checked ? 'true' : 'false');
 
     // Защита от опасных вложений
     localStorage.setItem('mail-attach-protect',
@@ -445,6 +434,13 @@ function playMailSound() {
 window.addEventListener('message', function(e) {
     if (e.data && e.data.type === 'mailLink' && e.data.url) {
         showLinkWarning(e.data.url);
+    }
+    if (e.data && e.data.type === 'mailtoLink' && e.data.href) {
+        try {
+            const addr = e.data.href.replace(/^mailto:/i, '').split('?')[0];
+            openCompose();
+            setTimeout(() => { document.getElementById('composeTo').value = decodeURIComponent(addr); }, 50);
+        } catch (_) {}
     }
 });
 
@@ -503,7 +499,55 @@ function showLinkWarning(url) {
 }
 
 // ── Инициализация ──────────────────────────────────────────────────────────
+function initPanelResizers() {
+    const sidebar       = document.querySelector('.sidebar');
+    const emailListPanel = document.querySelector('.email-list-panel');
+
+    // Восстанавливаем сохранённые ширины
+    const savedSidebar    = localStorage.getItem('panel-sidebar-width');
+    const savedEmailList  = localStorage.getItem('panel-emaillist-width');
+    if (savedSidebar)   sidebar.style.width       = savedSidebar;
+    if (savedEmailList) emailListPanel.style.width = savedEmailList;
+
+    function makeResizer(resizerId, targetEl, storageKey) {
+        const resizer = document.getElementById(resizerId);
+        if (!resizer) return;
+        let startX, startW;
+
+        resizer.addEventListener('mousedown', e => {
+            startX = e.clientX;
+            startW = targetEl.getBoundingClientRect().width;
+            resizer.classList.add('active');
+            document.body.style.cursor = 'col-resize';
+            document.body.style.userSelect = 'none';
+
+            function onMove(e) {
+                const delta = e.clientX - startX;
+                const min = parseInt(targetEl.style.minWidth) || 160;
+                const max = parseInt(targetEl.style.maxWidth) || 600;
+                const newW = Math.min(max, Math.max(min, startW + delta));
+                targetEl.style.width = newW + 'px';
+                localStorage.setItem(storageKey, newW + 'px');
+            }
+            function onUp() {
+                resizer.classList.remove('active');
+                document.body.style.cursor = '';
+                document.body.style.userSelect = '';
+                document.removeEventListener('mousemove', onMove);
+                document.removeEventListener('mouseup', onUp);
+            }
+            document.addEventListener('mousemove', onMove);
+            document.addEventListener('mouseup', onUp);
+        });
+    }
+
+    makeResizer('resizerSidebar',   sidebar,        'panel-sidebar-width');
+    makeResizer('resizerEmailList', emailListPanel,  'panel-emaillist-width');
+}
+
 document.addEventListener('DOMContentLoaded', async () => {
+    initPanelResizers();
+
     // Подсветить активный пункт сортировки по умолчанию
     document.querySelectorAll('.sort-option').forEach(el => {
         el.classList.toggle('active', el.dataset.sort === currentSort);
@@ -620,8 +664,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         document.querySelector('.compose-attach-zone')?.classList.remove('drag-over');
         const files = Array.from(e.dataTransfer.files || []);
         if (files.length === 0) return;
-        files.forEach(f => composeFiles.push(f));
-        renderComposeAttachList();
+        handleComposeFiles(files);
     }, false);
 
     accounts = await invoke('get_accounts');
@@ -691,7 +734,9 @@ async function saveAccount() {
     hideSetupError();
 
     try {
-        await invoke('save_account', { email, name, password, imapHost, imapPort, smtpHost, smtpPort });
+        const deleteAfterDays = parseInt(document.getElementById('setupDeleteAfterDays').value) || null;
+        const deletePermanent = document.getElementById('setupDeletePermanent').value === '1';
+        await invoke('save_account', { email, name, password, imapHost, imapPort, smtpHost, smtpPort, deleteAfterDays, deletePermanent });
         accounts = await invoke('get_accounts');
         showApp();
         const acc = accounts.find(a => a.email === email);
@@ -774,13 +819,16 @@ function openEditAccount(e, id) {
     if (!a) return;
     _editAccountId = id;
 
-    document.getElementById('editAccountEmail').value    = a.email;
-    document.getElementById('editAccountName').value     = a.name;
-    document.getElementById('editAccountPassword').value = '';   // не показываем текущий
+    document.getElementById('editAccountEmail').value       = a.email;
+    document.getElementById('editAccountName').value        = a.name;
+    document.getElementById('editAccountPassword').value    = '';   // не показываем текущий
+    document.getElementById('editAccountSignature').value   = a.signature || '';
     document.getElementById('editImapHost').value = a.imap_host;
     document.getElementById('editImapPort').value = a.imap_port;
     document.getElementById('editSmtpHost').value = a.smtp_host;
     document.getElementById('editSmtpPort').value = a.smtp_port;
+    document.getElementById('editDeleteAfterDays').value  = a.delete_after_days ?? '';
+    document.getElementById('editDeletePermanent').value  = a.delete_permanent ? '1' : '0';
     document.getElementById('editAccountError').style.display = 'none';
     document.getElementById('editAdvancedSettings').open = false;
 
@@ -830,8 +878,12 @@ async function saveEditAccount() {
     document.getElementById('editAccountError').style.display = 'none';
 
     try {
+        const deleteAfterDays = parseInt(document.getElementById('editDeleteAfterDays').value) || null;
+        const deletePermanent = document.getElementById('editDeletePermanent').value === '1';
+        const signature = document.getElementById('editAccountSignature').value;
         await invoke('update_account', {
             accountId: _editAccountId, name, password, imapHost, imapPort, smtpHost, smtpPort,
+            deleteAfterDays, deletePermanent, signature,
         });
         // Обновляем локальный массив
         accounts = await invoke('get_accounts');
@@ -862,8 +914,6 @@ function selectFolder(folder) {
 
     const title = FOLDER_NAMES[folder] || folder;
     document.getElementById('folderTitle').textContent = title;
-    const clearBtn = document.getElementById('clearTrashBtn');
-    if (clearBtn) clearBtn.style.display = folder === 'Trash' ? 'inline-flex' : 'none';
     document.getElementById('emailViewPanel').innerHTML =
         '<div class="empty-state large"><i class="fas fa-envelope-open-text"></i><p>Выберите письмо</p></div>';
 
@@ -1306,7 +1356,7 @@ async function syncCurrentFolder() {
     try {
         // Rust возвращает [] при первичной загрузке; при инкременте — массив NotifItem.
         // Пока идёт ожидание — события email-received уже добавляют письма по одному.
-        const leaveOnServer = localStorage.getItem('mail-leave-on-server') !== 'false';
+        const leaveOnServer = true;
         const newItems = await invoke('sync_folder', { accountId: currentAccountId, folder: imapFolderName(), offset: 0, leaveOnServer });
         _syncing = false;
         // Перерисовываем список финально (правильный порядок, актуальные данные)
@@ -1370,7 +1420,7 @@ async function loadMoreEmails() {
             return;
         }
         // Остальные папки — идём на IMAP за более старыми письмами
-        const leaveOnServer = localStorage.getItem('mail-leave-on-server') !== 'false';
+        const leaveOnServer = true;
         const newItems = await invoke('sync_folder', {
             accountId: currentAccountId,
             folder: imapFolderName(),
@@ -1571,7 +1621,7 @@ async function openEmail(id) {
 
         const bodyContent = email.body_html
             ? `<iframe class="email-body-frame" id="emailBodyFrame" sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox"></iframe>`
-            : `<pre class="email-body-text">${escHtml(email.body_text)}</pre>`;
+            : `<pre class="email-body-text">${linkifyText(email.body_text)}</pre>`;
 
         const isStarred = email.is_starred;
         const inTrash = currentFolder === 'Trash';
@@ -1673,9 +1723,14 @@ async function openEmail(id) {
         if (email.body_html) {
             const frame = document.getElementById('emailBodyFrame');
             if (frame) {
-                const linkInterceptor = `<script>document.addEventListener('click',function(e){var a=e.target.closest('a');if(!a||!a.href||a.href.startsWith('mailto:'))return;e.preventDefault();window.parent.postMessage({type:'mailLink',url:a.href},'*');});<\/script>`;
+                const linkInterceptor = `<script>document.addEventListener('click',function(e){var a=e.target.closest('a');if(!a||!a.href)return;e.preventDefault();if(a.href.startsWith('mailto:')){window.parent.postMessage({type:'mailtoLink',href:a.href},'*');}else{window.parent.postMessage({type:'mailLink',url:a.href},'*');}});<\/script>`;
                 const imageRestorer = `<script>window.addEventListener('message',function(e){if(e.data&&e.data.type==='showImages'){document.querySelectorAll('img[data-src]').forEach(function(img){img.src=img.getAttribute('data-src');});}});<\/script>`;
-                frame.srcdoc = processedHtml + linkInterceptor + imageRestorer;
+                const scripts = linkInterceptor + imageRestorer;
+                // Вставляем скрипты внутрь </body> для гарантированного выполнения
+                const injected = /<\/body>/i.test(processedHtml)
+                    ? processedHtml.replace(/<\/body>/i, scripts + '</body>')
+                    : processedHtml + scripts;
+                frame.srcdoc = injected;
             }
         }
     } catch (e) {
@@ -1758,26 +1813,43 @@ async function toggleStar(id) {
 
 async function clearTrash() {
     if (!currentAccountId) return;
-    if (allEmails.length === 0) return;
     if (!await window.__TAURI__.dialog.ask(
-        `Удалить навсегда все ${allEmails.length} писем из корзины?`,
+        'Удалить навсегда все письма из корзины?',
         { title: 'Очистить корзину', type: 'warning' }
     )) return;
-
-    const btn = document.getElementById('clearTrashBtn');
-    if (btn) btn.disabled = true;
     try {
         await invoke('clear_trash', { accountId: currentAccountId });
-        allEmails = [];
-        selectedIds.clear();
-        updateSelectToolbar();
-        renderEmailList(allEmails);
-        document.getElementById('emailViewPanel').innerHTML =
-            '<div class="empty-state large"><i class="fas fa-envelope-open-text"></i><p>Выберите письмо</p></div>';
+        if (currentFolder === 'Trash') {
+            allEmails = [];
+            selectedIds.clear();
+            updateSelectToolbar();
+            renderEmailList(allEmails);
+            document.getElementById('emailViewPanel').innerHTML =
+                '<div class="empty-state large"><i class="fas fa-envelope-open-text"></i><p>Выберите письмо</p></div>';
+        }
     } catch (e) {
         alert('Ошибка: ' + e);
-    } finally {
-        if (btn) btn.disabled = false;
+    }
+}
+
+async function clearSpam() {
+    if (!currentAccountId) return;
+    if (!await window.__TAURI__.dialog.ask(
+        'Удалить навсегда все письма из папки Спам?',
+        { title: 'Очистить спам', type: 'warning' }
+    )) return;
+    try {
+        await invoke('clear_spam', { accountId: currentAccountId });
+        if (currentFolder === 'Spam') {
+            allEmails = [];
+            selectedIds.clear();
+            updateSelectToolbar();
+            renderEmailList(allEmails);
+            document.getElementById('emailViewPanel').innerHTML =
+                '<div class="empty-state large"><i class="fas fa-envelope-open-text"></i><p>Выберите письмо</p></div>';
+        }
+    } catch (e) {
+        alert('Ошибка: ' + e);
     }
 }
 
@@ -2113,13 +2185,129 @@ async function togglePickerGroup(groupId) {
     }
 }
 
+let _savedColorRange = null;
+
+function composeColorSaveSelection() {
+    const sel = window.getSelection();
+    _savedColorRange = sel && sel.rangeCount > 0 ? sel.getRangeAt(0).cloneRange() : null;
+}
+
+function composeApplyColor(color) {
+    const body = document.getElementById('composeBody');
+    body.focus();
+    if (_savedColorRange) {
+        const sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(_savedColorRange);
+    }
+    document.execCommand('foreColor', false, color);
+    _savedColorRange = null;
+}
+
+const EMOJI_GROUPS = [
+    { label: 'Смайлики', emojis: ['😀','😁','😂','🤣','😃','😄','😅','😆','😉','😊','😋','😎','😍','😘','🥰','🙂','🤗','🤔','😐','🙄','😏','😒','😔','😕','🙃','🤑','😲','😢','😭','😤','😠','😡','🤬','😳','🤪','😵','😷','🤒','🤕','🥳','😇','🤠','🥱','😴'] },
+    { label: 'Жесты', emojis: ['👋','✋','👍','👎','👏','🙌','🙏','✌️','🤞','💪','🤝','☝️','👆','👇','👈','👉','🤷','💁','🫶'] },
+    { label: 'Сердца', emojis: ['❤️','🧡','💛','💚','💙','💜','🖤','🤍','💔','💕','💞','💓','💗','💖','💘','💝'] },
+    { label: 'Символы', emojis: ['💯','✅','❌','⭐','🌟','✨','🔥','💥','🎉','🎊','💫','🚀','💡','⚡','🌈','🍀','👑','🏆','📌','📎','🔔','💬','📧','⚠️','ℹ️'] },
+];
+
+function toggleEmojiPicker(btn) {
+    const panel = document.getElementById('emojiPickerPanel');
+    if (panel.style.display !== 'none') { closeEmojiPicker(); return; }
+
+    // Наполняем панель если пусто
+    if (!panel.innerHTML) {
+        panel.innerHTML = EMOJI_GROUPS.map(g => `
+            <div class="emoji-group-label">${g.label}</div>
+            <div class="emoji-grid">${g.emojis.map(e =>
+                `<button class="emoji-btn" onmousedown="event.preventDefault()" onclick="insertEmoji('${e}')">${e}</button>`
+            ).join('')}</div>
+        `).join('');
+    }
+
+    // Позиционируем под кнопкой
+    const rect = btn.getBoundingClientRect();
+    panel.style.display = 'block';
+    panel.style.top = (rect.bottom + 4) + 'px';
+    panel.style.left = Math.min(rect.left, window.innerWidth - 280) + 'px';
+
+    setTimeout(() => document.addEventListener('click', closeEmojiPickerOutside, { once: true }), 0);
+}
+
+function closeEmojiPicker() {
+    document.getElementById('emojiPickerPanel').style.display = 'none';
+}
+
+function closeEmojiPickerOutside(e) {
+    if (!e.target.closest('#emojiPickerPanel') && !e.target.closest('#emojiPickerBtn')) closeEmojiPicker();
+}
+
+function insertEmoji(emoji) {
+    document.getElementById('composeBody').focus();
+    document.execCommand('insertText', false, emoji);
+    closeEmojiPicker();
+}
+
+function composeFontSize(size) {
+    if (!size) return;
+    document.getElementById('composeBody').focus();
+    document.execCommand('fontSize', false, '7');
+    document.getElementById('composeBody').querySelectorAll('font[size="7"]').forEach(el => {
+        el.style.fontSize = size;
+        el.removeAttribute('size');
+    });
+}
+
+function composeInsertLink() {
+    const sel = window.getSelection();
+    const selectedText = sel ? sel.toString().trim() : '';
+    const savedRange = sel && sel.rangeCount > 0 ? sel.getRangeAt(0).cloneRange() : null;
+
+    const overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:99999;display:flex;align-items:center;justify-content:center;';
+    overlay.innerHTML = `
+        <div class="modal" style="max-width:340px;">
+            <div class="modal-header"><i class="fas fa-link"></i> Вставить ссылку</div>
+            <div class="modal-body">
+                <input id="composeInsertLinkInput" type="text" value="https://"
+                    style="width:100%;padding:7px 10px;border-radius:7px;border:1px solid var(--border);background:var(--bg3);color:var(--text1);font-size:0.9rem;box-sizing:border-box;">
+            </div>
+            <div class="modal-footer">
+                <button id="insertLinkCancel" class="btn-secondary">Отмена</button>
+                <button id="insertLinkOk" class="btn-primary">Вставить</button>
+            </div>
+        </div>`;
+    document.body.appendChild(overlay);
+    const input = overlay.querySelector('#composeInsertLinkInput');
+    input.focus(); input.select();
+
+    const doInsert = () => {
+        const url = input.value.trim();
+        document.body.removeChild(overlay);
+        if (!url || url === 'https://') return;
+        document.getElementById('composeBody').focus();
+        if (savedRange) {
+            sel.removeAllRanges();
+            sel.addRange(savedRange);
+        }
+        if (selectedText) {
+            document.execCommand('createLink', false, url);
+        } else {
+            document.execCommand('insertHTML', false, `<a href="${escHtml(url)}">${escHtml(url)}</a>`);
+        }
+    };
+    overlay.querySelector('#insertLinkOk').onclick = doInsert;
+    overlay.querySelector('#insertLinkCancel').onclick = () => document.body.removeChild(overlay);
+    input.onkeydown = e => { if (e.key === 'Enter') doInsert(); if (e.key === 'Escape') overlay.querySelector('#insertLinkCancel').click(); };
+}
+
 function openCompose(title = 'Новое письмо') {
     currentDraftId = null;
     document.getElementById('composeTo').value = '';
     document.getElementById('composeCc').value = '';
     document.getElementById('composeSubject').value = '';
-    // Вставляем подпись если задана
-    const sig = localStorage.getItem('mail-signature') || '';
+    // Вставляем подпись текущего аккаунта
+    const sig = accounts.find(a => a.id === currentAccountId)?.signature || '';
     document.getElementById('composeBody').innerHTML =
         sig ? `<p><br></p><p>--<br>${sig.replace(/\n/g, '<br>')}</p>` : '';
     document.getElementById('composeError').style.display = 'none';
@@ -2232,6 +2420,10 @@ async function updateDraftBadge() {
 // ── Вложения в письме ────────────────────────────────────────────────────────
 function handleComposeFiles(fileList) {
     for (const f of fileList) composeFiles.push(f);
+    const subj = document.getElementById('composeSubject');
+    if (subj && !subj.value.trim() && fileList.length > 0) {
+        subj.value = fileList[0].name.replace(/\.[^.]+$/, '');
+    }
     renderComposeAttachList();
 }
 
@@ -2554,6 +2746,18 @@ function formatSize(bytes) {
 function escHtml(s) {
     if (!s) return '';
     return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function linkifyText(text) {
+    const urlRegex = /(https?:\/\/[^\s<>"']+)/g;
+    const parts = text.split(urlRegex);
+    return parts.map((part, i) => {
+        if (i % 2 === 1) {
+            const urlJson = JSON.stringify(part).replace(/"/g, '&quot;');
+            return `<a href="#" onclick="showLinkWarning(${urlJson});return false;" style="color:var(--accent);word-break:break-all;">${escHtml(part)}</a>`;
+        }
+        return escHtml(part);
+    }).join('');
 }
 
 function shortAddr(addr) {
@@ -2935,7 +3139,8 @@ function updateContactsSelectBar() {
     const n = selectedContactIds.size;
     const bar = document.getElementById('contactsSelectBar');
     bar.classList.toggle('visible', n > 0);
-    document.getElementById('contactsSelCount').textContent = `${n} выбрано`;
+    const selCount = document.getElementById('contactsSelCount');
+    if (selCount) selCount.textContent = n;
     document.getElementById('groupAssignDropdown').style.display = 'none';
     // Sync select-all checkbox
     const allCb = document.getElementById('selectAllContacts');
@@ -3251,10 +3456,31 @@ async function deleteContactConfirm(id) {
         { title: 'Удалить контакт', type: 'warning' }
     )) return;
     try {
-        await invoke('delete_contact', { contactId: id });
+        await invoke('delete_contact', { id });
         contacts = contacts.filter(x => x.id !== id);
         currentContactId = null;
         renderContactList(contacts, document.getElementById('contactSearch').value);
+        document.getElementById('contactsDetailPanel').innerHTML =
+            '<div class="empty-state large"><i class="fas fa-address-book"></i><p>Выберите контакт</p></div>';
+    } catch (e) { alert('Ошибка: ' + e); }
+}
+
+async function deleteSelectedContacts() {
+    const ids = [...selectedContactIds];
+    if (ids.length === 0) return;
+    if (!await window.__TAURI__.dialog.ask(
+        `Удалить ${ids.length} контакт(ов)?`,
+        { title: 'Удалить контакты', type: 'warning' }
+    )) return;
+    try {
+        for (const id of ids) {
+            await invoke('delete_contact', { id });
+        }
+        contacts = contacts.filter(x => !ids.includes(x.id));
+        selectedContactIds.clear();
+        currentContactId = null;
+        renderContactList(contacts, document.getElementById('contactSearch').value);
+        updateContactsSelectBar();
         document.getElementById('contactsDetailPanel').innerHTML =
             '<div class="empty-state large"><i class="fas fa-address-book"></i><p>Выберите контакт</p></div>';
     } catch (e) { alert('Ошибка: ' + e); }
@@ -3276,13 +3502,48 @@ function closeImportDropdownOutside(e) {
     if (!e.target.closest('.import-btn-wrap')) closeImportDropdown();
 }
 
+async function showImportGroupModal() {
+    const groups = await invoke('get_groups');
+    return new Promise(resolve => {
+        const overlay = document.createElement('div');
+        overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:99999;display:flex;align-items:center;justify-content:center;';
+        const opts = groups.map(g => `<option value="${g.id}">${g.name}</option>`).join('');
+        overlay.innerHTML = `
+            <div class="modal" style="max-width:360px;">
+                <div class="modal-header"><i class="fas fa-users"></i> Импорт контактов</div>
+                <div class="modal-body">
+                    <p style="margin:0 0 10px;font-size:0.9rem;color:var(--text2);">Выберите группу для импортируемых контактов:</p>
+                    <select id="importGroupSelect" style="width:100%;padding:7px 10px;border-radius:7px;border:1px solid var(--border);background:var(--bg3);color:var(--text1);font-size:0.9rem;">
+                        ${opts}
+                    </select>
+                </div>
+                <div class="modal-footer">
+                    <button id="importGroupCancel" class="btn-secondary">Отмена</button>
+                    <button id="importGroupOk" class="btn-primary">Импортировать</button>
+                </div>
+            </div>`;
+        document.body.appendChild(overlay);
+        overlay.querySelector('#importGroupOk').onclick = () => {
+            const val = overlay.querySelector('#importGroupSelect').value;
+            document.body.removeChild(overlay);
+            resolve(val ? parseInt(val) : null);
+        };
+        overlay.querySelector('#importGroupCancel').onclick = () => {
+            document.body.removeChild(overlay);
+            resolve(false);
+        };
+    });
+}
+
 async function importContactsVcf(input) {
     const file = input.files[0];
     if (!file) return;
-    const text = await file.text();
     input.value = '';
+    const groupId = await showImportGroupModal();
+    if (groupId === false) return;
+    const text = await file.text();
     try {
-        const count = await invoke('import_contacts_vcf', { content: text });
+        const count = await invoke('import_contacts_vcf', { content: text, groupId: groupId || null });
         contacts = await invoke('get_contacts');
         contactsLoaded = true;
         renderContactList(contacts, '');
@@ -3293,10 +3554,12 @@ async function importContactsVcf(input) {
 async function importContactsCsv(input) {
     const file = input.files[0];
     if (!file) return;
-    const text = await file.text();
     input.value = '';
+    const groupId = await showImportGroupModal();
+    if (groupId === false) return;
+    const text = await file.text();
     try {
-        const count = await invoke('import_contacts_csv', { content: text });
+        const count = await invoke('import_contacts_csv', { content: text, groupId: groupId || null });
         contacts = await invoke('get_contacts');
         contactsLoaded = true;
         renderContactList(contacts, '');

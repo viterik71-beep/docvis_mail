@@ -45,6 +45,9 @@ struct AccountPublic {
     imap_port: u16,
     smtp_host: String,
     smtp_port: u16,
+    delete_after_days: Option<i64>,
+    delete_permanent: bool,
+    signature: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -136,13 +139,16 @@ struct AppState {
 fn init_db(conn: &Connection) {
     conn.execute_batch("
         CREATE TABLE IF NOT EXISTS accounts (
-            id        INTEGER PRIMARY KEY AUTOINCREMENT,
-            email     TEXT NOT NULL UNIQUE,
-            name      TEXT NOT NULL DEFAULT '',
-            imap_host TEXT NOT NULL,
-            imap_port INTEGER NOT NULL DEFAULT 993,
-            smtp_host TEXT NOT NULL,
-            smtp_port INTEGER NOT NULL DEFAULT 465
+            id               INTEGER PRIMARY KEY AUTOINCREMENT,
+            email            TEXT NOT NULL UNIQUE,
+            name             TEXT NOT NULL DEFAULT '',
+            imap_host        TEXT NOT NULL,
+            imap_port        INTEGER NOT NULL DEFAULT 993,
+            smtp_host        TEXT NOT NULL,
+            smtp_port        INTEGER NOT NULL DEFAULT 465,
+            delete_after_days INTEGER,
+            delete_permanent  INTEGER NOT NULL DEFAULT 0,
+            signature         TEXT NOT NULL DEFAULT ''
         );
 
         CREATE TABLE IF NOT EXISTS emails (
@@ -510,6 +516,79 @@ fn snippet_from_text(text: &str, max: usize) -> String {
     } else {
         format!("{}…", chars[..max].iter().collect::<String>())
     }
+}
+
+// ─── Очистка старых писем с сервера ──────────────────────────────────────────
+
+fn purge_old_emails_imap(account: &Account, uids: &[u32], permanent: bool) -> Result<(), String> {
+    use std::net::TcpStream;
+    if uids.is_empty() { return Ok(()); }
+
+    let timeout = std::time::Duration::from_secs(30);
+    let tcp = TcpStream::connect((account.imap_host.as_str(), account.imap_port))
+        .map_err(|e| e.to_string())?;
+    tcp.set_read_timeout(Some(timeout)).ok();
+    tcp.set_write_timeout(Some(timeout)).ok();
+    let tls = native_tls::TlsConnector::builder().build().map_err(|e| e.to_string())?;
+    let tls_stream = tls.connect(&account.imap_host, tcp).map_err(|e| e.to_string())?;
+    let client = imap::Client::new(tls_stream);
+    let mut session = client.login(&account.email, &account.password)
+        .map_err(|(e, _)| e.to_string())?;
+
+    session.select("INBOX").map_err(|e| e.to_string())?;
+
+    let uid_set = uids.iter().map(|u| u.to_string()).collect::<Vec<_>>().join(",");
+
+    if !permanent {
+        // Ищем папку Trash на сервере
+        let trash = ["Trash", "INBOX.Trash", "[Gmail]/Корзина", "[Gmail]/Trash",
+                     "Удалённые", "Deleted Messages", "Deleted Items"]
+            .iter()
+            .find(|&&name| session.list(None, Some(name)).map(|l| !l.is_empty()).unwrap_or(false))
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| "Trash".to_string());
+
+        // Копируем в корзину
+        session.uid_mv(&uid_set, &trash).ok();
+    }
+
+    // Помечаем \Deleted и удаляем
+    session.uid_store(&uid_set, "+FLAGS (\\Deleted)").map_err(|e| e.to_string())?;
+    session.expunge().map_err(|e| e.to_string())?;
+    let _ = session.logout();
+    Ok(())
+}
+
+fn purge_old_emails_for_account(conn: &Connection, account: &Account,
+                                 days: i64, permanent: bool) -> usize {
+    let cutoff = chrono::Utc::now().timestamp() - days * 86400;
+
+    // Получаем UID писем из INBOX старше N дней
+    let mut stmt = match conn.prepare(
+        "SELECT id, uid FROM emails WHERE account_id=?1 AND folder='INBOX' AND date_ts > 0 AND date_ts < ?2"
+    ) {
+        Ok(s) => s,
+        Err(_) => return 0,
+    };
+
+    let rows: Vec<(i64, u32)> = stmt.query_map(params![account.id, cutoff], |r| {
+        Ok((r.get::<_, i64>(0)?, r.get::<_, u32>(1)?))
+    }).ok()
+    .map(|iter| iter.filter_map(|r| r.ok()).collect())
+    .unwrap_or_default();
+
+    if rows.is_empty() { return 0; }
+
+    let uids: Vec<u32> = rows.iter().map(|(_, uid)| *uid).collect();
+
+    // Удаляем с сервера через IMAP
+    if let Err(e) = purge_old_emails_imap(account, &uids, permanent) {
+        log_to_file(&format!("purge_old_emails: IMAP error for {}: {}", account.email, e));
+        return 0;
+    }
+
+    log_to_file(&format!("purge_old_emails: removed {} emails from server for {}", uids.len(), account.email));
+    uids.len()
 }
 
 // ─── IMAP: получение писем ───────────────────────────────────────────────────
@@ -1327,17 +1406,20 @@ fn get_account_by_id(conn: &Connection, id: i64) -> Result<Account, String> {
 fn get_accounts(state: State<AppState>) -> Result<Vec<AccountPublic>, String> {
     let conn = state.db.lock().unwrap();
     let mut stmt = conn.prepare(
-        "SELECT id, email, name, imap_host, imap_port, smtp_host, smtp_port FROM accounts"
+        "SELECT id, email, name, imap_host, imap_port, smtp_host, smtp_port, delete_after_days, delete_permanent, signature FROM accounts"
     ).map_err(|e| e.to_string())?;
 
     let list: Vec<AccountPublic> = stmt.query_map([], |r| Ok(AccountPublic {
-        id:        r.get(0)?,
-        email:     r.get(1)?,
-        name:      r.get(2)?,
-        imap_host: r.get(3)?,
-        imap_port: r.get(4)?,
-        smtp_host: r.get(5)?,
-        smtp_port: r.get(6)?,
+        id:                r.get(0)?,
+        email:             r.get(1)?,
+        name:              r.get(2)?,
+        imap_host:         r.get(3)?,
+        imap_port:         r.get(4)?,
+        smtp_host:         r.get(5)?,
+        smtp_port:         r.get(6)?,
+        delete_after_days: r.get(7)?,
+        delete_permanent:  r.get::<_, i32>(8)? != 0,
+        signature:         r.get(9).unwrap_or_default(),
     })).map_err(|e| e.to_string())?
     .filter_map(|r| r.ok())
     .collect();
@@ -1374,22 +1456,24 @@ fn save_account(
     imap_port: u16,
     smtp_host: String,
     smtp_port: u16,
+    delete_after_days: Option<i64>,
+    delete_permanent: bool,
 ) -> Result<(), String> {
-    // Проверяем подключение до сохранения — если ошибка, ничего не сохраняем
     verify_imap(&email, &password, &imap_host, imap_port)?;
-
-    // Подключение успешно — сохраняем пароль в Windows Credential Manager
     cred_set(&email, &password)?;
 
     let conn = state.db.lock().unwrap();
     conn.execute(
-        "INSERT INTO accounts (email, name, imap_host, imap_port, smtp_host, smtp_port)
-         VALUES (?1,?2,?3,?4,?5,?6)
+        "INSERT INTO accounts (email, name, imap_host, imap_port, smtp_host, smtp_port, delete_after_days, delete_permanent)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8)
          ON CONFLICT(email) DO UPDATE SET
            name=excluded.name,
            imap_host=excluded.imap_host, imap_port=excluded.imap_port,
-           smtp_host=excluded.smtp_host, smtp_port=excluded.smtp_port",
-        params![email, name, imap_host, imap_port as i64, smtp_host, smtp_port as i64],
+           smtp_host=excluded.smtp_host, smtp_port=excluded.smtp_port,
+           delete_after_days=excluded.delete_after_days,
+           delete_permanent=excluded.delete_permanent",
+        params![email, name, imap_host, imap_port as i64, smtp_host, smtp_port as i64,
+                delete_after_days, delete_permanent as i32],
     ).map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -1404,6 +1488,9 @@ fn update_account(
     imap_port: u16,
     smtp_host: String,
     smtp_port: u16,
+    delete_after_days: Option<i64>,
+    delete_permanent: bool,
+    signature: String,
 ) -> Result<(), String> {
     // Получаем email (идентификатор не меняется)
     let email: String = {
@@ -1428,11 +1515,12 @@ fn update_account(
     // Сохраняем пароль в Windows Credential Manager
     cred_set(&email, &actual_password)?;
 
-    // Обновляем настройки в БД (пароль не хранится)
     let conn = state.db.lock().unwrap();
     conn.execute(
-        "UPDATE accounts SET name=?1, imap_host=?2, imap_port=?3, smtp_host=?4, smtp_port=?5 WHERE id=?6",
-        params![name, imap_host, imap_port as i64, smtp_host, smtp_port as i64, account_id],
+        "UPDATE accounts SET name=?1, imap_host=?2, imap_port=?3, smtp_host=?4, smtp_port=?5,
+         delete_after_days=?6, delete_permanent=?7, signature=?8 WHERE id=?9",
+        params![name, imap_host, imap_port as i64, smtp_host, smtp_port as i64,
+                delete_after_days, delete_permanent as i32, signature, account_id],
     ).map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -1604,6 +1692,29 @@ async fn sync_folder(
         // Письма от заблокированных контактов → Спам
         if !messages.is_empty() {
             filter_blacklisted_to_spam(&conn, account_id);
+        }
+    }
+
+    // Очистка старых писем (только при инкрементальном синхронизации INBOX, не при первичной загрузке)
+    if folder == "INBOX" && last_uid > 0 && offset == 0 {
+        let account_clone = {
+            let conn = state.db.lock().unwrap();
+            get_account_by_id(&conn, account_id).ok()
+        };
+        if let Some(acc) = account_clone {
+            let (days_opt, permanent) = {
+                let conn = state.db.lock().unwrap();
+                let r: Option<(Option<i64>, bool)> = conn.query_row(
+                    "SELECT delete_after_days, delete_permanent FROM accounts WHERE id=?1",
+                    params![account_id],
+                    |r| Ok((r.get(0)?, r.get::<_, i32>(1)? != 0)),
+                ).ok();
+                r.unwrap_or((None, false))
+            };
+            if let Some(days) = days_opt {
+                let conn = state.db.lock().unwrap();
+                purge_old_emails_for_account(&conn, &acc, days, permanent);
+            }
         }
     }
 
@@ -1785,8 +1896,6 @@ fn auto_save_attachments(
             .join(month_ru)
             .join(email_dt.format("%d").to_string())
             .join(email_dt.format("%H-%M").to_string());
-        if std::fs::create_dir_all(&dest_dir).is_err() { continue; }
-
         let mut stmt = match conn.prepare(
             "SELECT id, file_path, filename FROM attachments WHERE email_id=?1 AND saved_path IS NULL"
         ) {
@@ -1799,6 +1908,9 @@ fn auto_save_attachments(
             Ok(mapped) => mapped.filter_map(|r| r.ok()).collect(),
             Err(_) => continue,
         };
+
+        if rows.is_empty() { continue; }
+        if std::fs::create_dir_all(&dest_dir).is_err() { continue; }
 
         for (att_id, file_path, filename) in rows {
             let src = std::path::Path::new(&file_path);
@@ -1826,8 +1938,10 @@ fn auto_save_attachments(
             let dest = dest_dir.join(&dest_name);
             if std::fs::copy(src, &dest).is_ok() {
                 let saved = dest.to_string_lossy().to_string();
+                // Удаляем внутреннюю копию — она больше не нужна
+                std::fs::remove_file(src).ok();
                 conn.execute(
-                    "UPDATE attachments SET saved_path=?1 WHERE id=?2",
+                    "UPDATE attachments SET saved_path=?1, file_path=?1 WHERE id=?2",
                     params![saved, att_id],
                 ).ok();
             }
@@ -2515,20 +2629,37 @@ fn read_attachment_b64(file_path: String) -> Result<serde_json::Value, String> {
 /// zip/rar/7z — стандартные архивы, остаются без изменений.
 const DANGEROUS_ATTACH_EXT: &[&str] = &[
     // Исполняемые
-    "exe","msi","com","scr","pif","dll","cpl","ocx",
+    "exe","msi","msp","mst","com","scr","pif","dll","cpl","ocx","msc","application","xbap","appref-ms",
     // Скрипты командной строки
-    "bat","cmd","ps1","psm1","psd1","ps2",
-    // Скрипты Windows
-    "vbs","vbe","jse","wsf","wsh",
-    // HTML-приложения и ярлыки
-    "hta","lnk","url",
+    "bat","cmd","ps1","psm1","psd1","ps2","ps1xml","ps2xml","psc1","psc2",
+    // Скрипты Windows / интерпретируемые
+    "vbs","vbe","vb","vbp","jse","js","wsf","wsh","ws","wsc","sct","shb","shs",
+    // Скрипты общие (если интерпретатор установлен)
+    "py","rb","pl","php",
+    // HTML-приложения, ярлыки, веб-архивы
+    "hta","lnk","url","website","mht","mhtml",
     // Реестр и автозапуск
     "reg","inf",
+    // OneNote — массовый вектор атак 2023-2025 (встраивает vbs/exe внутрь)
+    "one","onepkg",
+    // SVG — может содержать JS, активно используется в фишинге 2024
+    "svg",
+    // Виртуальные диски — обход Mark-of-the-Web (MOTW)
+    "vhd","vhdx",
+    // Windows-специфичные векторы атак
+    "chm","hlp","gadget","scf",
+    "diagcab","diagpkg","settingcontent-ms","theme","themepack",
+    "search-ms","searchconnector-ms",
+    // Java
+    "jar","jnlp","class",
+    // Access (макросы и проекты)
+    "ade","adp","mda","mdb","mde","mdt","mdw","mdz",
     // Office с макросами
-    "docm","dotm","xlsm","xlsb","xltm","pptm","potm","ppam","ppsm",
+    "docm","dotm","xlsm","xlsb","xltm","xlam","xll","pptm","potm","ppam","ppsm","sldm",
+    "pub","pubm","wll",
     // Архивы — опасные или редкие (zip/rar/7z оставлены без изменений)
     "iso","img","cab","arj","ace","lzh","lha",
-    "jar","lz","tar","uue","xz","z","zipx","001","bz2","gz",
+    "lz","tar","uue","xz","z","zipx","001","bz2","gz",
 ];
 
 fn is_dangerous_attach_ext(filename: &str) -> bool {
@@ -2748,9 +2879,11 @@ fn open_attachment(
         let fname = src.file_name().unwrap_or_default().to_string_lossy().to_string();
         let dest = dest_dir.join(&fname);
         std::fs::copy(src, &dest).map_err(|e| e.to_string())?;
+        // Удаляем внутреннюю копию — она больше не нужна
+        std::fs::remove_file(src).ok();
         let saved_str = dest.to_string_lossy().to_string();
         let conn = state.db.lock().unwrap();
-        conn.execute("UPDATE attachments SET saved_path=?1 WHERE file_path=?2",
+        conn.execute("UPDATE attachments SET saved_path=?1, file_path=?1 WHERE file_path=?2",
             params![saved_str, file_path]).ok();
         saved_str
     };
@@ -2789,6 +2922,31 @@ fn clear_trash(state: State<AppState>, account_id: i64) -> Result<usize, String>
 
     let count = conn.execute(
         "DELETE FROM emails WHERE account_id=?1 AND folder='Trash'",
+        params![account_id],
+    ).map_err(|e| e.to_string())?;
+
+    Ok(count)
+}
+
+#[tauri::command]
+fn clear_spam(state: State<AppState>, account_id: i64) -> Result<usize, String> {
+    let conn = state.db.lock().unwrap();
+    let mut stmt = conn.prepare(
+        "SELECT id FROM emails WHERE account_id=?1 AND folder='Spam'"
+    ).map_err(|e| e.to_string())?;
+    let ids: Vec<i64> = stmt.query_map(params![account_id], |r| r.get(0))
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    for id in &ids {
+        conn.execute("DELETE FROM attachments WHERE email_id=?1", params![id]).ok();
+        let dir = attachments_dir(*id);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    let count = conn.execute(
+        "DELETE FROM emails WHERE account_id=?1 AND folder='Spam'",
         params![account_id],
     ).map_err(|e| e.to_string())?;
 
@@ -2955,7 +3113,7 @@ fn parse_csv_contacts(content: &str) -> Vec<(String,String,String,String,String)
     result
 }
 
-fn insert_contacts(conn: &Connection, list: &[(String,String,String,String,String)]) -> usize {
+fn insert_contacts(conn: &Connection, list: &[(String,String,String,String,String)], group_id: Option<i64>) -> usize {
     let mut count = 0;
     for (name, email, phone, company, notes) in list {
         if email.is_empty() && name.is_empty() { continue; }
@@ -2971,6 +3129,12 @@ fn insert_contacts(conn: &Connection, list: &[(String,String,String,String,Strin
             "SELECT id FROM contacts WHERE email=?1", params![email], |r| r.get::<_,i64>(0)
         ) {
             add_to_default_group(conn, id);
+            if let Some(gid) = group_id {
+                conn.execute(
+                    "INSERT OR IGNORE INTO contact_group_members (contact_id, group_id) VALUES (?1, ?2)",
+                    params![id, gid],
+                ).ok();
+            }
             count += 1;
         }
     }
@@ -3025,17 +3189,17 @@ fn delete_contact(state: State<AppState>, id: i64) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn import_contacts_vcf(state: State<AppState>, content: String) -> Result<usize, String> {
+fn import_contacts_vcf(state: State<AppState>, content: String, group_id: Option<i64>) -> Result<usize, String> {
     let list = parse_vcf_content(&content);
     let conn = state.db.lock().unwrap();
-    Ok(insert_contacts(&conn, &list))
+    Ok(insert_contacts(&conn, &list, group_id))
 }
 
 #[tauri::command]
-fn import_contacts_csv(state: State<AppState>, content: String) -> Result<usize, String> {
+fn import_contacts_csv(state: State<AppState>, content: String, group_id: Option<i64>) -> Result<usize, String> {
     let list = parse_csv_contacts(&content);
     let conn = state.db.lock().unwrap();
-    Ok(insert_contacts(&conn, &list))
+    Ok(insert_contacts(&conn, &list, group_id))
 }
 
 #[tauri::command]
@@ -3476,6 +3640,7 @@ fn main() {
             move_emails_to_folder,
             delete_permanently,
             clear_trash,
+            clear_spam,
             delete_emails_bulk,
             mark_read_bulk,
             mark_all_read,
