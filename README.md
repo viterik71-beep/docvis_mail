@@ -105,6 +105,7 @@
 | Java | `.jnlp` `.class` |
 | Access | `.ade` `.adp` `.mda` `.mdb` `.mde` `.mdt` `.mdw` `.mdz` |
 | Office с макросами | `.docm` `.dotm` `.xlsm` `.xlsb` `.xltm` `.xlam` `.xll` `.pptm` `.potm` `.ppam` `.ppsm` `.sldm` `.pub` `.pubm` `.wll` |
+| LibreOffice шаблоны и редкие форматы | `.ott` `.ots` `.otp` `.otg` *(шаблоны с макросами, аналог dotm/xltm/potm)* `.odg` `.odb` *(в почте не встречаются легитимно)* |
 | Опасные архивы | `.iso` `.img` `.cab` `.arj` `.ace` `.lzh` `.lha` `.lz` `.tar` `.uue` `.xz` `.z` `.zipx` `.bz2` `.gz` |
 
 </details>

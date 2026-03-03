@@ -2657,6 +2657,8 @@ const DANGEROUS_ATTACH_EXT: &[&str] = &[
     // Office с макросами
     "docm","dotm","xlsm","xlsb","xltm","xlam","xll","pptm","potm","ppam","ppsm","sldm",
     "pub","pubm","wll",
+    // LibreOffice шаблоны (аналоги dotm/xltm/potm) и редкие форматы — в почте не встречаются легитимно
+    "ott","ots","otp","otg","odg","odb",
     // Архивы — опасные или редкие (zip/rar/7z оставлены без изменений)
     "iso","img","cab","arj","ace","lzh","lha",
     "lz","tar","uue","xz","z","zipx","001","bz2","gz",
