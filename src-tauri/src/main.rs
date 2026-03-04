@@ -3485,9 +3485,61 @@ fn set_autostart(enable: bool) -> Result<(), String> {
     Ok(())
 }
 
+// ─── Одиночный экземпляр (single instance) ───────────────────────────────────
+
+/// Возвращает false если уже запущена другая копия.
+/// В этом случае поднимает существующее окно и возвращает false.
+#[cfg(target_os = "windows")]
+fn ensure_single_instance() -> bool {
+    use std::os::windows::ffi::OsStrExt;
+    use std::ffi::OsStr;
+
+    extern "system" {
+        fn CreateMutexW(attrs: *mut u8, owner: i32, name: *const u16) -> *mut u8;
+        fn GetLastError() -> u32;
+        fn FindWindowW(class: *const u16, title: *const u16) -> *mut u8;
+        fn ShowWindow(hwnd: *mut u8, cmd: i32) -> i32;
+        fn SetForegroundWindow(hwnd: *mut u8) -> i32;
+        fn IsIconic(hwnd: *mut u8) -> i32;
+    }
+    const ERROR_ALREADY_EXISTS: u32 = 183;
+    const SW_RESTORE: i32 = 9;
+    const SW_SHOW: i32 = 5;
+
+    fn wide(s: &str) -> Vec<u16> {
+        OsStr::new(s).encode_wide().chain(std::iter::once(0)).collect()
+    }
+
+    unsafe {
+        let mutex_name = wide("Global\\DocVisMail_SingleInstance_v1");
+        let mutex = CreateMutexW(std::ptr::null_mut(), 0, mutex_name.as_ptr());
+        if mutex.is_null() || GetLastError() == ERROR_ALREADY_EXISTS {
+            // Найти окно существующего экземпляра по заголовку и показать его
+            let title = wide("ДокВис Почта");
+            let hwnd = FindWindowW(std::ptr::null(), title.as_ptr());
+            if !hwnd.is_null() {
+                if IsIconic(hwnd) != 0 {
+                    ShowWindow(hwnd, SW_RESTORE);
+                } else {
+                    ShowWindow(hwnd, SW_SHOW);
+                }
+                SetForegroundWindow(hwnd);
+            }
+            return false;
+        }
+        true
+    }
+}
+
 // ─── main ────────────────────────────────────────────────────────────────────
 
 fn main() {
+    // Не допускаем второй экземпляр — поднимаем существующее окно
+    #[cfg(target_os = "windows")]
+    if !ensure_single_instance() {
+        return;
+    }
+
     rotate_log_if_needed();
 
     // Если есть отложенное восстановление — применяем до открытия БД

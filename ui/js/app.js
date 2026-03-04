@@ -1854,8 +1854,15 @@ async function clearSpam() {
 }
 
 async function moveToSpam(id) {
+    const email = allEmails.find(e => e.id === id);
     await invoke('move_to_spam', { emailId: id });
     await invoke('block_sender', { emailId: id });
+    // Также заносим в чёрный список контактов
+    if (email?.from_addr) {
+        await invoke('blacklist_sender', { fromAddr: email.from_addr }).catch(() => {});
+        // Обновить список контактов если он уже загружен
+        if (contacts.length > 0) contacts = await invoke('get_contacts');
+    }
     allEmails = allEmails.filter(e => e.id !== id);
     renderEmailList(allEmails);
     document.getElementById('emailViewPanel').innerHTML =
