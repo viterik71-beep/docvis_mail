@@ -3920,3 +3920,123 @@ async function confirmRenameFolder() {
         errEl.style.display = 'block';
     }
 }
+
+// ─── Белый список расширений ─────────────────────────────────────────────────
+
+const WL_DEFAULT = [
+    'doc','docx','xls','xlsx','ppt','pptx','pdf','txt','odt','ods','odp','csv',
+    'xodt','xods','xodp',
+    'jpg','jpeg','png','gif','bmp','webp','heic','heif',
+    'mp3','wav','flac','ogg','aac','m4a','wma','opus',
+    'mp4','avi','mkv','mov','wmv','webm','m4v','3gp',
+    'zip','rar','7z',
+    'json','xml','md','log','sig','p7s'
+];
+
+function wlAllCheckboxes() {
+    return document.querySelectorAll('#whitelistModal input[type="checkbox"]');
+}
+
+// ── per-category add ──────────────────────────────────────────────────────────
+
+function wlCatShow(id) {
+    document.getElementById('wlCatInput-' + id).style.display = 'flex';
+    document.getElementById('wlCatBtn-' + id).style.display = 'none';
+    document.getElementById('wlCatField-' + id).focus();
+}
+
+function wlCatHide(id) {
+    document.getElementById('wlCatInput-' + id).style.display = 'none';
+    document.getElementById('wlCatBtn-' + id).style.display = '';
+    document.getElementById('wlCatField-' + id).value = '';
+}
+
+function wlCatAdd(id) {
+    const field = document.getElementById('wlCatField-' + id);
+    const raw = field.value.trim().replace(/^\.+/, '');
+    if (!raw) { wlCatHide(id); return; }
+    const parts = raw.split(/[,\s]+/).map(s => s.replace(/^\.+/, '').toLowerCase()).filter(Boolean);
+    const knownExts = new Set([...wlAllCheckboxes()].map(cb => cb.value.toLowerCase()));
+    const container = document.getElementById('wlCatCustom-' + id);
+    const existing = new Set([...container.querySelectorAll('.wl-custom-chip')].map(c => c.dataset.ext));
+    // Also check all other custom containers to avoid global duplicates
+    const allCustom = new Set([...document.querySelectorAll('#whitelistModal .wl-custom-chip')].map(c => c.dataset.ext));
+    parts.forEach(ext => {
+        if (ext && !knownExts.has(ext) && !allCustom.has(ext)) {
+            wlCatRenderChip(container, ext);
+            allCustom.add(ext);
+        }
+    });
+    wlCatHide(id);
+}
+
+function wlCatRenderChip(container, ext) {
+    const chip = document.createElement('span');
+    chip.className = 'wl-custom-chip';
+    chip.dataset.ext = ext.toLowerCase();
+    chip.innerHTML = `<span>.${ext}</span><button onclick="this.parentElement.remove()" title="Удалить">×</button>`;
+    container.appendChild(chip);
+}
+
+// ── open / close ──────────────────────────────────────────────────────────────
+
+async function openWhitelist() {
+    let current;
+    try {
+        const result = await invoke('get_safe_extensions');
+        current = result.extensions.map(e => e.toLowerCase());
+    } catch {
+        current = WL_DEFAULT.slice();
+    }
+
+    // Сброс всех per-category custom chips и скрытых input-ов
+    document.querySelectorAll('#whitelistModal .wl-cat-customs').forEach(c => c.innerHTML = '');
+    document.querySelectorAll('#whitelistModal .wl-cat-add-row').forEach(r => r.style.display = 'none');
+    document.querySelectorAll('#whitelistModal .wl-add-link').forEach(b => b.style.display = '');
+    document.getElementById('wlCatSectionCustom').style.display = 'none';
+
+    // Проставляем чекбоксы
+    wlAllCheckboxes().forEach(cb => { cb.checked = current.includes(cb.value.toLowerCase()); });
+
+    // Неизвестные расширения (не совпадающие ни с одним чекбоксом) → секция "Прочие"
+    const knownExts = new Set([...wlAllCheckboxes()].map(cb => cb.value.toLowerCase()));
+    const customExts = current.filter(e => !knownExts.has(e));
+    if (customExts.length > 0) {
+        const customSection = document.getElementById('wlCatSectionCustom');
+        customSection.style.display = '';
+        const container = document.getElementById('wlCatCustom-custom');
+        customExts.forEach(ext => wlCatRenderChip(container, ext));
+    }
+
+    document.getElementById('whitelistModal').style.display = 'flex';
+}
+
+function closeWhitelist() {
+    document.getElementById('whitelistModal').style.display = 'none';
+}
+
+function closeWhitelistOverlay(e) {
+    if (e.target === document.getElementById('whitelistModal')) closeWhitelist();
+}
+
+// ── save / reset ──────────────────────────────────────────────────────────────
+
+async function saveWhitelist() {
+    const extensions = [];
+    wlAllCheckboxes().forEach(cb => { if (cb.checked) extensions.push(cb.value); });
+    document.querySelectorAll('#whitelistModal .wl-custom-chip').forEach(chip => {
+        extensions.push(chip.dataset.ext);
+    });
+    try {
+        await invoke('set_safe_extensions', { extensions });
+        closeWhitelist();
+    } catch (e) {
+        alert('Ошибка сохранения: ' + e);
+    }
+}
+
+function wlResetToDefault() {
+    wlAllCheckboxes().forEach(cb => { cb.checked = WL_DEFAULT.includes(cb.value.toLowerCase()); });
+    document.querySelectorAll('#whitelistModal .wl-cat-customs').forEach(c => c.innerHTML = '');
+    document.getElementById('wlCatSectionCustom').style.display = 'none';
+}

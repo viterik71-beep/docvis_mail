@@ -680,11 +680,14 @@
                     </label>
                 </div>
                 <div class="settings-hint" style="margin-top:4px;">
-                    При открытии опасных файлов расширение будет изменено:
-                    <b>invoice.exe → invoice._exe</b>. Файл сохранится, но Windows не запустит его случайно.<br>
-                    Исполняемые: exe, msi, dll, bat, cmd, ps1, vbs, lnk, hta и др.<br>
-                    Архивы: iso, jar, tar, gz, bz2, xz, cab, arj, ace и др.<br>
-                    Безопасные архивы (не затрагиваются): zip, rar, 7z.
+                    Белый список: файлы с разрешёнными расширениями доставляются как есть.
+                    Все остальные нейтрализуются: <b>invoice.exe → invoice.[virus]_exe</b>.<br>
+                    Windows не запустит переименованный файл случайно.
+                </div>
+                <div class="settings-row" style="margin-top:8px;">
+                    <button class="ev-btn" onclick="openWhitelist()">
+                        <i class="fas fa-list-check"></i> Разрешённые расширения
+                    </button>
                 </div>
             </div>
 
@@ -825,6 +828,184 @@
             <div id="editAccountError" class="setup-error" style="display:none;"></div>
             <button class="btn-primary" onclick="saveEditAccount()" id="editAccountSaveBtn">
                 <i class="fas fa-save"></i> Сохранить
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- ─── Белый список расширений ─── -->
+<div id="whitelistModal" class="modal-overlay" style="display:none;" onclick="closeWhitelistOverlay(event)">
+    <div class="settings-dialog" style="max-width:620px; max-height:85vh; display:flex; flex-direction:column;">
+        <div class="settings-header">
+            <span><i class="fas fa-shield-alt"></i> Разрешённые расширения файлов</span>
+            <button class="icon-btn" onclick="closeWhitelist()"><i class="fas fa-times"></i></button>
+        </div>
+        <div style="overflow-y:auto; flex:1; padding:4px 0;">
+            <div class="settings-hint" style="padding:10px 16px 6px;">
+                Отмеченные расширения доставляются без изменений. Остальные нейтрализуются:
+                <b>report.exe → report.[virus]_exe</b>. В каждую категорию можно добавить своё расширение.
+            </div>
+
+            <div class="wl-category">
+                <div class="wl-category-title">Документы</div>
+                <div class="wl-chips" id="wlCat-docs">
+                    <label class="wl-chip"><input type="checkbox" value="doc"> .doc</label>
+                    <label class="wl-chip"><input type="checkbox" value="docx"> .docx</label>
+                    <label class="wl-chip"><input type="checkbox" value="xls"> .xls</label>
+                    <label class="wl-chip"><input type="checkbox" value="xlsx"> .xlsx</label>
+                    <label class="wl-chip"><input type="checkbox" value="ppt"> .ppt</label>
+                    <label class="wl-chip"><input type="checkbox" value="pptx"> .pptx</label>
+                    <label class="wl-chip"><input type="checkbox" value="pdf"> .pdf</label>
+                    <label class="wl-chip"><input type="checkbox" value="txt"> .txt</label>
+                    <label class="wl-chip" title="Уязвим: история эксплойтов OLE/RTF (CVE-2017-11882, CVE-2023-21716). Включайте только если нужно"><input type="checkbox" value="rtf"> .rtf</label>
+                    <label class="wl-chip"><input type="checkbox" value="odt"> .odt</label>
+                    <label class="wl-chip"><input type="checkbox" value="ods"> .ods</label>
+                    <label class="wl-chip"><input type="checkbox" value="odp"> .odp</label>
+                    <label class="wl-chip"><input type="checkbox" value="csv"> .csv</label>
+                    <label class="wl-chip" title="Мой Офис: текст"><input type="checkbox" value="xodt"> .xodt</label>
+                    <label class="wl-chip" title="Мой Офис: таблица"><input type="checkbox" value="xods"> .xods</label>
+                    <label class="wl-chip" title="Мой Офис: презентация"><input type="checkbox" value="xodp"> .xodp</label>
+
+                </div>
+                <div class="wl-cat-customs" id="wlCatCustom-docs"></div>
+                <div class="wl-cat-add-row" id="wlCatInput-docs" style="display:none;">
+                    <input class="wl-add-input" id="wlCatField-docs" placeholder="расширение"
+                           onkeydown="if(event.key==='Enter')wlCatAdd('docs'); else if(event.key==='Escape')wlCatHide('docs')">
+                    <button class="ev-btn wl-ok-btn" onclick="wlCatAdd('docs')">ОК</button>
+                    <button class="icon-btn" onclick="wlCatHide('docs')"><i class="fas fa-times"></i></button>
+                </div>
+                <button class="wl-add-link" id="wlCatBtn-docs" onclick="wlCatShow('docs')">
+                    <i class="fas fa-plus-circle"></i> добавить
+                </button>
+            </div>
+
+            <div class="wl-category">
+                <div class="wl-category-title">Изображения</div>
+                <div class="wl-chips" id="wlCat-images">
+                    <label class="wl-chip"><input type="checkbox" value="jpg"> .jpg</label>
+                    <label class="wl-chip"><input type="checkbox" value="jpeg"> .jpeg</label>
+                    <label class="wl-chip"><input type="checkbox" value="png"> .png</label>
+                    <label class="wl-chip"><input type="checkbox" value="gif"> .gif</label>
+                    <label class="wl-chip"><input type="checkbox" value="bmp"> .bmp</label>
+                    <label class="wl-chip"><input type="checkbox" value="webp"> .webp</label>
+                    <label class="wl-chip"><input type="checkbox" value="heic"> .heic</label>
+                    <label class="wl-chip"><input type="checkbox" value="heif"> .heif</label>
+                </div>
+                <div class="wl-cat-customs" id="wlCatCustom-images"></div>
+                <div class="wl-cat-add-row" id="wlCatInput-images" style="display:none;">
+                    <input class="wl-add-input" id="wlCatField-images" placeholder="расширение"
+                           onkeydown="if(event.key==='Enter')wlCatAdd('images'); else if(event.key==='Escape')wlCatHide('images')">
+                    <button class="ev-btn wl-ok-btn" onclick="wlCatAdd('images')">ОК</button>
+                    <button class="icon-btn" onclick="wlCatHide('images')"><i class="fas fa-times"></i></button>
+                </div>
+                <button class="wl-add-link" id="wlCatBtn-images" onclick="wlCatShow('images')">
+                    <i class="fas fa-plus-circle"></i> добавить
+                </button>
+            </div>
+
+            <div class="wl-category">
+                <div class="wl-category-title">Аудио</div>
+                <div class="wl-chips" id="wlCat-audio">
+                    <label class="wl-chip"><input type="checkbox" value="mp3"> .mp3</label>
+                    <label class="wl-chip"><input type="checkbox" value="wav"> .wav</label>
+                    <label class="wl-chip"><input type="checkbox" value="flac"> .flac</label>
+                    <label class="wl-chip"><input type="checkbox" value="ogg"> .ogg</label>
+                    <label class="wl-chip"><input type="checkbox" value="aac"> .aac</label>
+                    <label class="wl-chip"><input type="checkbox" value="m4a"> .m4a</label>
+                    <label class="wl-chip"><input type="checkbox" value="wma"> .wma</label>
+                    <label class="wl-chip"><input type="checkbox" value="opus"> .opus</label>
+                </div>
+                <div class="wl-cat-customs" id="wlCatCustom-audio"></div>
+                <div class="wl-cat-add-row" id="wlCatInput-audio" style="display:none;">
+                    <input class="wl-add-input" id="wlCatField-audio" placeholder="расширение"
+                           onkeydown="if(event.key==='Enter')wlCatAdd('audio'); else if(event.key==='Escape')wlCatHide('audio')">
+                    <button class="ev-btn wl-ok-btn" onclick="wlCatAdd('audio')">ОК</button>
+                    <button class="icon-btn" onclick="wlCatHide('audio')"><i class="fas fa-times"></i></button>
+                </div>
+                <button class="wl-add-link" id="wlCatBtn-audio" onclick="wlCatShow('audio')">
+                    <i class="fas fa-plus-circle"></i> добавить
+                </button>
+            </div>
+
+            <div class="wl-category">
+                <div class="wl-category-title">Видео</div>
+                <div class="wl-chips" id="wlCat-video">
+                    <label class="wl-chip"><input type="checkbox" value="mp4"> .mp4</label>
+                    <label class="wl-chip"><input type="checkbox" value="avi"> .avi</label>
+                    <label class="wl-chip"><input type="checkbox" value="mkv"> .mkv</label>
+                    <label class="wl-chip"><input type="checkbox" value="mov"> .mov</label>
+                    <label class="wl-chip"><input type="checkbox" value="wmv"> .wmv</label>
+                    <label class="wl-chip"><input type="checkbox" value="webm"> .webm</label>
+                    <label class="wl-chip"><input type="checkbox" value="m4v"> .m4v</label>
+                    <label class="wl-chip"><input type="checkbox" value="3gp"> .3gp</label>
+                </div>
+                <div class="wl-cat-customs" id="wlCatCustom-video"></div>
+                <div class="wl-cat-add-row" id="wlCatInput-video" style="display:none;">
+                    <input class="wl-add-input" id="wlCatField-video" placeholder="расширение"
+                           onkeydown="if(event.key==='Enter')wlCatAdd('video'); else if(event.key==='Escape')wlCatHide('video')">
+                    <button class="ev-btn wl-ok-btn" onclick="wlCatAdd('video')">ОК</button>
+                    <button class="icon-btn" onclick="wlCatHide('video')"><i class="fas fa-times"></i></button>
+                </div>
+                <button class="wl-add-link" id="wlCatBtn-video" onclick="wlCatShow('video')">
+                    <i class="fas fa-plus-circle"></i> добавить
+                </button>
+            </div>
+
+            <div class="wl-category">
+                <div class="wl-category-title">Архивы</div>
+                <div class="wl-chips" id="wlCat-archives">
+                    <label class="wl-chip"><input type="checkbox" value="zip"> .zip</label>
+                    <label class="wl-chip"><input type="checkbox" value="rar"> .rar</label>
+                    <label class="wl-chip"><input type="checkbox" value="7z"> .7z</label>
+                </div>
+                <div class="wl-cat-customs" id="wlCatCustom-archives"></div>
+                <div class="wl-cat-add-row" id="wlCatInput-archives" style="display:none;">
+                    <input class="wl-add-input" id="wlCatField-archives" placeholder="расширение"
+                           onkeydown="if(event.key==='Enter')wlCatAdd('archives'); else if(event.key==='Escape')wlCatHide('archives')">
+                    <button class="ev-btn wl-ok-btn" onclick="wlCatAdd('archives')">ОК</button>
+                    <button class="icon-btn" onclick="wlCatHide('archives')"><i class="fas fa-times"></i></button>
+                </div>
+                <button class="wl-add-link" id="wlCatBtn-archives" onclick="wlCatShow('archives')">
+                    <i class="fas fa-plus-circle"></i> добавить
+                </button>
+            </div>
+
+            <div class="wl-category">
+                <div class="wl-category-title">Прочее</div>
+                <div class="wl-chips" id="wlCat-other">
+                    <label class="wl-chip"><input type="checkbox" value="json"> .json</label>
+                    <label class="wl-chip"><input type="checkbox" value="xml"> .xml</label>
+                    <label class="wl-chip"><input type="checkbox" value="md"> .md</label>
+                    <label class="wl-chip"><input type="checkbox" value="log"> .log</label>
+                    <label class="wl-chip" title="Файл электронной подписи (PKCS#7)"><input type="checkbox" value="sig"> .sig</label>
+                    <label class="wl-chip" title="Присоединённая подпись PKCS#7 (S/MIME)"><input type="checkbox" value="p7s"> .p7s</label>
+                </div>
+                <div class="wl-cat-customs" id="wlCatCustom-other"></div>
+                <div class="wl-cat-add-row" id="wlCatInput-other" style="display:none;">
+                    <input class="wl-add-input" id="wlCatField-other" placeholder="расширение"
+                           onkeydown="if(event.key==='Enter')wlCatAdd('other'); else if(event.key==='Escape')wlCatHide('other')">
+                    <button class="ev-btn wl-ok-btn" onclick="wlCatAdd('other')">ОК</button>
+                    <button class="icon-btn" onclick="wlCatHide('other')"><i class="fas fa-times"></i></button>
+                </div>
+                <button class="wl-add-link" id="wlCatBtn-other" onclick="wlCatShow('other')">
+                    <i class="fas fa-plus-circle"></i> добавить
+                </button>
+            </div>
+
+            <!-- Подхват неизвестных расширений (при загрузке) -->
+            <div class="wl-category" id="wlCatSectionCustom" style="display:none;">
+                <div class="wl-category-title">Прочие (загруженные)</div>
+                <div class="wl-chips wl-cat-customs" id="wlCatCustom-custom" style="padding:0 0 4px;"></div>
+            </div>
+        </div>
+
+        <div class="settings-footer">
+            <button class="btn-primary" onclick="saveWhitelist()" style="width:auto; padding:8px 24px;">
+                <i class="fas fa-save"></i> Сохранить
+            </button>
+            <button class="ev-btn" onclick="closeWhitelist()">Отмена</button>
+            <button class="ev-btn" onclick="wlResetToDefault()" style="margin-left:auto; color:var(--text-muted);">
+                <i class="fas fa-undo"></i> По умолчанию
             </button>
         </div>
     </div>

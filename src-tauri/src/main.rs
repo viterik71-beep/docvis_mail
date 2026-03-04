@@ -312,6 +312,63 @@ fn write_backup_settings(s: &BackupSettings) -> Result<(), String> {
     std::fs::write(backup_settings_path(), json).map_err(|e| e.to_string())
 }
 
+// ─── Белый список расширений ──────────────────────────────────────────────────
+
+/// Расширения, которые считаются безопасными и доставляются без изменений.
+/// Всё остальное нейтрализуется: invoice.exe → invoice.[virus]_exe
+const DEFAULT_SAFE_EXT: &[&str] = &[
+    // Документы (включая OnlyOffice/Р7-Офис и Мой Офис)
+    "doc","docx","xls","xlsx","ppt","pptx","pdf","txt","odt","ods","odp","csv",
+    "xodt","xods","xodp",
+    // Изображения
+    "jpg","jpeg","png","gif","bmp","webp","heic","heif",
+    // Аудио
+    "mp3","wav","flac","ogg","aac","m4a","wma","opus",
+    // Видео
+    "mp4","avi","mkv","mov","wmv","webm","m4v","3gp",
+    // Архивы (zip/rar/7z сканируются изнутри, но не нейтрализуются)
+    "zip","rar","7z",
+    // Прочее (sig/p7s — файлы электронной подписи КЭП/ЭЦП, часто прикладываются к документам)
+    "json","xml","md","log","sig","p7s",
+];
+
+#[derive(Debug, Serialize, Deserialize)]
+struct SafeExtSettings {
+    extensions: Vec<String>,
+}
+
+impl Default for SafeExtSettings {
+    fn default() -> Self {
+        Self { extensions: DEFAULT_SAFE_EXT.iter().map(|s| s.to_string()).collect() }
+    }
+}
+
+fn safe_ext_path() -> std::path::PathBuf {
+    get_data_dir().join("safe_extensions.json")
+}
+
+fn read_safe_extensions() -> SafeExtSettings {
+    std::fs::read_to_string(safe_ext_path())
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+fn write_safe_extensions(s: &SafeExtSettings) -> Result<(), String> {
+    let json = serde_json::to_string_pretty(s).map_err(|e| e.to_string())?;
+    std::fs::write(safe_ext_path(), json).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn get_safe_extensions() -> SafeExtSettings {
+    read_safe_extensions()
+}
+
+#[tauri::command]
+fn set_safe_extensions(extensions: Vec<String>) -> Result<(), String> {
+    write_safe_extensions(&SafeExtSettings { extensions })
+}
+
 fn backups_dir() -> std::path::PathBuf {
     let dir = get_data_dir().join("backups");
     std::fs::create_dir_all(&dir).ok();
@@ -2625,61 +2682,13 @@ fn read_attachment_b64(file_path: String) -> Result<serde_json::Value, String> {
     Ok(serde_json::json!({ "b64": b64, "mime_type": mime }))
 }
 
-/// Расширения файлов, опасных при открытии пользователем.
-/// zip/rar/7z — стандартные архивы, остаются без изменений.
-const DANGEROUS_ATTACH_EXT: &[&str] = &[
-    // Исполняемые и системные (sys/drv в почте = таргетированная атака; efi = UEFI-payload уровня APT)
-    "exe","msi","msp","mst","com","scr","pif","dll","cpl","ocx","msc","application","xbap","appref-ms",
-    "sys","drv","efi",
-    // Скрипты командной строки
-    "bat","cmd","ps1","psm1","psd1","ps2","ps1xml","ps2xml","psc1","psc2",
-    // Скрипты Windows / интерпретируемые
-    "vbs","vbe","vb","vbp","jse","js","wsf","wsh","ws","wsc","sct","shb","shs",
-    // Скрипты общие (если интерпретатор установлен)
-    "py","rb","pl","php",
-    // HTML-приложения, ярлыки, веб-архивы, HTML-smuggling векторы
-    // shtml/shtm — SSI-файлы, браузер открывает как HTML и выполняет JS; в почте не бывают легитимно
-    "hta","lnk","url","website","mht","mhtml","xhtml","shtml","shtm",
-    // Реестр и автозапуск
-    "reg","inf",
-    // OneNote — массовый вектор атак 2023-2025 (встраивает vbs/exe внутрь)
-    "one","onepkg",
-    // SVG — может содержать JS, активно используется в фишинге 2024
-    "svg",
-    // Виртуальные диски и образы — обход Mark-of-the-Web (MOTW)
-    "vhd","vhdx","wim","esd",
-    // Windows-специфичные векторы атак
-    "chm","hlp","gadget","scf","ani",
-    "diagcab","diagpkg","settingcontent-ms","theme","themepack",
-    "search-ms","searchconnector-ms","library-ms",
-    // Windows App пакеты — сайдлоад, активно используются для обхода Defender
-    "appx","msix","appxbundle","msixbundle",
-    // Контейнеры с приватными ключами — социальная инженерия ("обновите сертификат")
-    "pfx","p12",
-    // Java
-    "jar","jnlp","class",
-    // Access (макросы и проекты) — старые и новые форматы
-    "ade","adp","mda","mdb","mde","mdt","mdw","mdz",
-    "accdb","accde","accdr","accdt",
-    // Office bypass-форматы (без макросов, но выполняют внешний код)
-    // SLK обходит Protected View; IQY/DQY/OQY/RQY — Web Query, запрос к внешнему URL; UDL — подключение к БД
-    "slk","iqy","dqy","oqy","rqy","udl",
-    // VBA-модули
-    "bas",
-    // Office с макросами
-    "docm","dotm","xlsm","xlsb","xltm","xlam","xll","pptm","potm","ppam","ppsm","sldm",
-    "pub","pubm","wll",
-    // LibreOffice шаблоны (аналоги dotm/xltm/potm) и редкие форматы — в почте не встречаются легитимно
-    "ott","ots","otp","otg","odg","odb",
-    // Архивы — опасные или редкие (zip/rar/7z оставлены без изменений)
-    "iso","img","cab","arj","ace","lzh","lha",
-    "lz","tar","uue","xz","z","zipx","001","bz2","gz",
-    "cpio","zst","lzma",
-];
-
+/// Возвращает true если расширение файла НЕ находится в белом списке пользователя.
+/// Белый список хранится в safe_extensions.json; при отсутствии используется DEFAULT_SAFE_EXT.
 fn is_dangerous_attach_ext(filename: &str) -> bool {
     let ext = filename.rsplit('.').next().unwrap_or("").to_lowercase();
-    DANGEROUS_ATTACH_EXT.contains(&ext.as_str())
+    if ext.is_empty() { return false; }
+    let safe = read_safe_extensions();
+    !safe.extensions.iter().any(|s| s.eq_ignore_ascii_case(&ext))
 }
 
 /// "invoice.exe" → "invoice.[virus]_exe", "doc.zip" → "doc.[virus]_zip"
@@ -3693,6 +3702,8 @@ fn main() {
             restore_database,
             get_backup_settings,
             set_backup_settings,
+            get_safe_extensions,
+            set_safe_extensions,
             get_backups_dir_path,
             open_backups_folder,
             restart_app,
