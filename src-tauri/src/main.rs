@@ -1994,6 +1994,7 @@ fn auto_save_attachments(
             };
             let dest = dest_dir.join(&dest_name);
             if std::fs::copy(src, &dest).is_ok() {
+                write_motw(&dest); // MOTW — Protected View в Office, ограниченный режим в PDF
                 let saved = dest.to_string_lossy().to_string();
                 // Удаляем внутреннюю копию — она больше не нужна
                 std::fs::remove_file(src).ok();
@@ -2691,6 +2692,18 @@ fn is_dangerous_attach_ext(filename: &str) -> bool {
     !safe.extensions.iter().any(|s| s.eq_ignore_ascii_case(&ext))
 }
 
+/// Записывает Zone.Identifier ADS (Mark of the Web, ZoneId=3 — Internet).
+/// Заставляет Office открывать файл в Protected View (макросы отключены),
+/// а PDF-ридеры — применять ограниченный режим (JavaScript отключён).
+/// Работает только на NTFS; на FAT/exFAT молча игнорируется.
+#[cfg(target_os = "windows")]
+fn write_motw(dest: &std::path::Path) {
+    let ads = format!("{}:Zone.Identifier", dest.display());
+    let _ = std::fs::write(ads, "[ZoneTransfer]\r\nZoneId=3\r\nReferrerUrl=about:internet\r\n");
+}
+#[cfg(not(target_os = "windows"))]
+fn write_motw(_dest: &std::path::Path) {}
+
 /// "invoice.exe" → "invoice.[virus]_exe", "doc.zip" → "doc.[virus]_zip"
 fn neutralize_filename(name: &str) -> String {
     if let Some(pos) = name.rfind('.') {
@@ -2884,6 +2897,7 @@ fn open_attachment(
             let fname = src.file_name().unwrap_or_default().to_string_lossy().to_string();
             let dest = dest_dir.join(&fname);
             std::fs::copy(src, &dest).map_err(|e| e.to_string())?;
+            write_motw(&dest);
             let saved_str = dest.to_string_lossy().to_string();
             let conn = state.db.lock().unwrap();
             conn.execute("UPDATE attachments SET saved_path=?1 WHERE file_path=?2",
@@ -2903,6 +2917,7 @@ fn open_attachment(
         let fname = src.file_name().unwrap_or_default().to_string_lossy().to_string();
         let dest = dest_dir.join(&fname);
         std::fs::copy(src, &dest).map_err(|e| e.to_string())?;
+        write_motw(&dest);
         // Удаляем внутреннюю копию — она больше не нужна
         std::fs::remove_file(src).ok();
         let saved_str = dest.to_string_lossy().to_string();
